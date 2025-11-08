@@ -430,7 +430,8 @@ describe("Gas Profiling", () => {
       it("Should profile gas for createAccount() with 1 level", async () => {
         const tx = await factory.createAccount(
           owner.address,
-          [[fixture.others[0].address, fixture.others[1].address]]
+          [[fixture.others[0].address, fixture.others[1].address]],
+          1n
         );
         const receipt = await tx.wait();
         expect(receipt).to.not.be.null;
@@ -442,7 +443,8 @@ describe("Gas Profiling", () => {
           [
             [fixture.others[0].address, fixture.others[1].address],
             [fixture.others[2].address]
-          ]
+          ],
+          2n
         );
         const receipt = await tx.wait();
         expect(receipt).to.not.be.null;
@@ -455,7 +457,8 @@ describe("Gas Profiling", () => {
             [fixture.others[0].address, fixture.others[1].address, fixture.others[2].address],
             [fixture.others[3].address, fixture.others[4].address],
             [fixture.others[5].address]
-          ]
+          ],
+          3n
         );
         const receipt = await tx.wait();
         expect(receipt).to.not.be.null;
@@ -465,17 +468,18 @@ describe("Gas Profiling", () => {
         const signers = Array.from({ length: 10 }, (_, i) => fixture.others[i].address);
         const tx = await factory.createAccount(
           owner.address,
-          [signers]
+          [signers],
+          4n
         );
         const receipt = await tx.wait();
         expect(receipt).to.not.be.null;
       });
     });
 
-    describe("getAddress() - Counterfactual Address Computation", () => {
-      it("Should profile gas for getAddress()", async () => {
+    describe("computeAccountAddress() - Counterfactual Address Computation", () => {
+      it("Should profile gas for computeAccountAddress()", async () => {
         const salt = 12345n;
-        const address = await factory.getAddress(owner.address, salt);
+        const address = await factory.computeAccountAddress(owner.address, salt);
         expect(address).to.be.a("string");
         expect(address).to.not.equal(ethers.ZeroAddress);
       });
@@ -675,13 +679,17 @@ describe("Gas Profiling", () => {
       }
       const manySigners = signers;
       const LevelFactory = await ethers.getContractFactory("Level");
+      const nextLevelId = await account.nextLevelId();
       const largeLevel = await LevelFactory.deploy(
         await account.getAddress(),
-        10,
+        nextLevelId,
         manySigners
       );
+      await largeLevel.waitForDeployment();
 
-      await account.connect(owner).addLevel(await largeLevel.getAddress());
+      const levelAddress = await largeLevel.getAddress();
+      expect(levelAddress).to.not.equal(ethers.ZeroAddress);
+      await account.connect(owner).addLevel(levelAddress);
 
       // Propose transaction
       const amount = ethers.parseEther("5000");

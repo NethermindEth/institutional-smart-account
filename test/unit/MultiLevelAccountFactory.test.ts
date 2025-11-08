@@ -40,7 +40,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         [exec.address]
       ];
 
-      const tx = await factory.createAccount(owner.address, levelSigners);
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
 
       const accountCreatedEvent = receipt?.logs
@@ -75,7 +75,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         [comp1.address]
       ];
 
-      const tx = await factory.createAccount(owner.address, levelSigners);
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
 
       const levelEvents = receipt?.logs
@@ -96,7 +96,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         [ops1.address, ops2.address, ops3.address]
       ];
 
-      const tx = await factory.createAccount(owner.address, levelSigners);
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
 
       const accountCreatedEvent = receipt?.logs
@@ -131,42 +131,37 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
   describe("Counterfactual Address", () => {
     it("Should compute counterfactual address", async () => {
       const salt = 12345;
-      const computedAddress = await factory.getAddress(owner.address, salt);
+      const computedAddress = await factory.computeAccountAddress(owner.address, salt);
       
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
       expect(computedAddress).to.be.a("string");
     });
 
     it("Should compute address with zero salt", async () => {
-      const computedAddress = await factory.getAddress(owner.address, 0);
+      const computedAddress = await factory.computeAccountAddress(owner.address, 0);
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
     it("Should compute address with large salt", async () => {
       const largeSalt = ethers.MaxUint256;
-      const computedAddress = await factory.getAddress(owner.address, largeSalt);
+      const computedAddress = await factory.computeAccountAddress(owner.address, largeSalt);
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
     it("Should compute address with zero address owner", async () => {
-      const computedAddress = await factory.getAddress(ethers.ZeroAddress, 1);
+      const computedAddress = await factory.computeAccountAddress(ethers.ZeroAddress, 1);
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
     it("Should compute different addresses for different salts", async () => {
-      // Note: The factory uses regular 'new' not CREATE2, so getAddress is theoretical
-      // The getAddress function uses CREATE2 formula, so different salts should produce different addresses
-      const address1 = await factory.getAddress(owner.address, 1);
-      const address2 = await factory.getAddress(owner.address, 2);
+      // The factory now uses CREATE2, so computeAccountAddress should match actual deployments
+      const salt1 = 1n;
+      const salt2 = 2n;
+      const address1 = await factory.computeAccountAddress(owner.address, salt1);
+      const address2 = await factory.computeAccountAddress(owner.address, salt2);
       
       // These should be different (CREATE2 formula with different salts)
-      // If they're the same, the factory's getAddress implementation might be wrong
-      // But since factory doesn't actually use CREATE2, this test validates the formula works
-      if (address1 === address2) {
-        // If they're the same, it means the salt isn't being used correctly in the formula
-        // This is a known limitation - the factory doesn't use CREATE2
-        console.warn("Warning: Factory getAddress produces same address for different salts (factory doesn't use CREATE2)");
-      }
+      expect(address1).to.not.equal(address2, "Addresses should be different for different salts");
       expect(address1).to.not.equal(ethers.ZeroAddress);
       expect(address2).to.not.equal(ethers.ZeroAddress);
     });
@@ -182,33 +177,95 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       expect(owner1.address).to.not.equal(owner2.address, "Test setup: owners must be different");
       
       // Get addresses with same salt but different owners
-      const address1 = await factory.getAddress(owner1.address, 1);
-      const address2 = await factory.getAddress(owner2.address, 1);
+      const address1 = await factory.computeAccountAddress(owner1.address, 1);
+      const address2 = await factory.computeAccountAddress(owner2.address, 1);
       
       // Different owners should produce different addresses
       // The owner is part of the constructor args, so different owners = different initCode
       expect(address1).to.not.equal(ethers.ZeroAddress);
       expect(address2).to.not.equal(ethers.ZeroAddress);
-      
-      // NOTE: This test may fail if the factory's getAddress implementation has a bug
-      // where the owner parameter isn't properly included in the bytecode hash.
-      // The actual deployment uses `new` (not CREATE2), so this is a theoretical calculation.
-      // If addresses are the same, it indicates the owner isn't affecting the hash calculation.
-      // For now, we'll mark this as a known limitation and verify addresses are non-zero.
-      if (address1 === address2) {
-        // This is a known issue - the getAddress function may not be correctly
-        // including the owner in the bytecode calculation
-        // Skip the assertion but log a warning
-        console.warn(
-          `WARNING: Factory getAddress produces same address for different owners.\n` +
-          `Owner1: ${owner1.address}\n` +
-          `Owner2: ${owner2.address}\n` +
-          `This indicates a potential bug in getAddress implementation.`
-        );
-        // Don't fail the test, but note the issue
-        return;
-      }
       expect(address1).to.not.equal(address2);
+    });
+
+    it("Should match computeAccountAddress with actual deployed address", async () => {
+      const salt = 12345;
+      const predictedAddress = await factory.computeAccountAddress(owner.address, salt);
+      
+      const levelSigners = [[ops1.address]];
+      const tx = await factory.createAccount(owner.address, levelSigners, salt);
+      const receipt = await tx.wait();
+      
+      const accountCreatedEvent = receipt?.logs
+        .map((log) => {
+          try {
+            return factory.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed && parsed.name === "AccountCreated");
+      
+      expect(accountCreatedEvent).to.not.be.null;
+      
+      if (accountCreatedEvent && accountCreatedEvent.args) {
+        const actualAddress = accountCreatedEvent.args[0];
+        // The predicted address should match the actual deployed address
+        expect(actualAddress).to.equal(predictedAddress);
+      }
+    });
+
+    it("Should allow pre-funding counterfactual address", async () => {
+      // This test verifies the fix for the security issue:
+      // Users can safely pre-fund the counterfactual address before deployment
+      const salt = 0;
+      const predictedAddress = await factory.computeAccountAddress(owner.address, salt);
+      
+      // Pre-fund the predicted address
+      const funder = owner;
+      const fundAmount = ethers.parseEther("1.0");
+      await funder.sendTransaction({
+        to: predictedAddress,
+        value: fundAmount,
+      });
+      
+      // Verify the funds are at the predicted address
+      const balanceBefore = await ethers.provider.getBalance(predictedAddress);
+      expect(balanceBefore).to.equal(fundAmount);
+      
+      // Deploy the account using CREATE2
+      const levelSigners = [[ops1.address]];
+      const tx = await factory.createAccount(owner.address, levelSigners, salt);
+      const receipt = await tx.wait();
+      
+      const accountCreatedEvent = receipt?.logs
+        .map((log) => {
+          try {
+            return factory.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed && parsed.name === "AccountCreated");
+      
+      expect(accountCreatedEvent).to.not.be.null;
+      
+      if (accountCreatedEvent && accountCreatedEvent.args) {
+        const actualAddress = accountCreatedEvent.args[0];
+        
+        // The actual address must match the predicted address
+        expect(actualAddress).to.equal(predictedAddress);
+        
+        // Verify the funds are still there and accessible
+        const balanceAfter = await ethers.provider.getBalance(actualAddress);
+        expect(balanceAfter).to.equal(fundAmount);
+        
+        // Verify we can interact with the account (proving it's the correct contract)
+        const account = await ethers.getContractAt(
+          "MultiLevelAccount",
+          actualAddress
+        ) as unknown as MultiLevelAccount;
+        expect(await account.owner()).to.equal(owner.address);
+      }
     });
   });
 
@@ -219,7 +276,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
     });
 
     it("Should create account with empty level signers array", async () => {
-      const tx = await factory.createAccount(owner.address, []);
+      const tx = await factory.createAccount(owner.address, [], 0);
       const receipt = await tx.wait();
 
       const accountCreatedEvent = receipt?.logs
@@ -250,7 +307,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
     it("Should create account with single level", async () => {
       const levelSigners = [[ops1.address]];
 
-      const tx = await factory.createAccount(owner.address, levelSigners);
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
 
       const accountCreatedEvent = receipt?.logs
@@ -279,7 +336,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
     it("Should emit LevelCreated event with correct parameters", async () => {
       const levelSigners = [[ops1.address, ops2.address]];
 
-      const tx = await factory.createAccount(owner.address, levelSigners);
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
 
       const levelEvents = receipt?.logs
@@ -304,7 +361,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
     it("Should complete initialization after creating account", async () => {
       const levelSigners = [[ops1.address]];
 
-      const tx = await factory.createAccount(owner.address, levelSigners);
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
 
       const accountCreatedEvent = receipt?.logs

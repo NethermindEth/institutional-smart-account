@@ -46,7 +46,8 @@ export async function deploySDKFixture(): Promise<SDKFixture> {
       [ops1.address, ops2.address, ops3.address], // Level 1
       [comp1.address, comp2.address],              // Level 2
       [exec.address]                               // Level 3
-    ]
+    ],
+    0 // salt
   );
   
   const receipt = await tx.wait();

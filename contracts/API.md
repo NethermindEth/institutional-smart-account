@@ -708,10 +708,10 @@ Create a new MultiLevelAccount with levels.
 
 **Emits:** `AccountCreated`, `LevelCreated` (for each level)
 
-##### `getAddress`
+##### `computeAccountAddress`
 
 ```solidity
-function getAddress(
+function computeAccountAddress(
     address owner,
     uint256 salt
 ) external view returns (address)

@@ -289,6 +289,11 @@ contract MultiLevelAccount is IAccount, Ownable {
         if (levelAddress == address(0)) revert InvalidConfiguration();
         
         levelId = nextLevelId++;
+        
+        // Verify the Level's internal levelId matches the assigned levelId
+        uint256 levelInternalId = ILevel(levelAddress).levelId();
+        if (levelInternalId != levelId) revert InvalidConfiguration();
+        
         levelContracts[levelId] = levelAddress;
         
         emit LevelAdded(levelId, levelAddress);
@@ -307,6 +312,11 @@ contract MultiLevelAccount is IAccount, Ownable {
         if (initializationComplete) revert Unauthorized();
         
         levelId = nextLevelId++;
+        
+        // Verify the Level's internal levelId matches the assigned levelId
+        uint256 levelInternalId = ILevel(levelAddress).levelId();
+        if (levelInternalId != levelId) revert InvalidConfiguration();
+        
         levelContracts[levelId] = levelAddress;
         
         emit LevelAdded(levelId, levelAddress);
@@ -331,6 +341,10 @@ contract MultiLevelAccount is IAccount, Ownable {
     function updateLevel(uint256 levelId, address newAddress) external onlyOwner {
         if (levelContracts[levelId] == address(0)) revert InvalidConfiguration();
         if (newAddress == address(0)) revert InvalidConfiguration();
+        
+        // Verify the new Level's internal levelId matches the levelId being updated
+        uint256 levelInternalId = ILevel(newAddress).levelId();
+        if (levelInternalId != levelId) revert InvalidConfiguration();
         
         levelContracts[levelId] = newAddress;
     }

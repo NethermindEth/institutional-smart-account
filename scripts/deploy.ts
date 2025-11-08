@@ -36,7 +36,7 @@ async function main() {
     ]
   ];
   
-  const tx = await factory.createAccount(owner, levelSigners);
+  const tx = await factory.createAccount(owner, levelSigners, 0);
   const receipt = await tx.wait();
   
   if (!receipt) {

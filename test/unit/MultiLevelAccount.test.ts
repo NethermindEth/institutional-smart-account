@@ -175,6 +175,121 @@ describe("MultiLevelAccount - Unit Tests", () => {
       
       expect(await account.levelContracts(1)).to.equal(await newLevel.getAddress());
     });
+
+    it("Should reject addLevel with mismatched levelId", async () => {
+      const newLevelSigners = [fixture.others[0].address, fixture.others[1].address];
+      const LevelFactory = await ethers.getContractFactory("Level");
+      // Deploy Level with levelId = 10, but addLevel will try to assign levelId = 4
+      const newLevel = await LevelFactory.deploy(
+        await account.getAddress(),
+        10, // Mismatched levelId
+        newLevelSigners
+      );
+
+      // Should revert because Level's internal levelId (10) != assigned levelId (4)
+      await expect(
+        account.connect(owner).addLevel(await newLevel.getAddress())
+      ).to.be.revertedWithCustomError(account, "InvalidConfiguration");
+    });
+
+    it("Should accept addLevel with matching levelId", async () => {
+      const newLevelSigners = [fixture.others[0].address, fixture.others[1].address];
+      const LevelFactory = await ethers.getContractFactory("Level");
+      // Get the next levelId that will be assigned
+      const nextLevelId = await account.nextLevelId();
+      // Deploy Level with matching levelId
+      const newLevel = await LevelFactory.deploy(
+        await account.getAddress(),
+        nextLevelId,
+        newLevelSigners
+      );
+
+      const tx = await account.connect(owner).addLevel(await newLevel.getAddress());
+      const receipt = await tx.wait();
+      
+      const event = receipt?.logs
+        .map((log) => {
+          try {
+            return account.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed && parsed.name === "LevelAdded");
+
+      expect(event).to.not.be.null;
+      expect(await account.levelContracts(nextLevelId)).to.equal(await newLevel.getAddress());
+    });
+
+    it("Should reject updateLevel with mismatched levelId", async () => {
+      const newLevelSigners = [fixture.others[0].address];
+      const LevelFactory = await ethers.getContractFactory("Level");
+      // Deploy Level with levelId = 99, but trying to update levelId = 1
+      const newLevel = await LevelFactory.deploy(
+        await account.getAddress(),
+        99, // Mismatched levelId
+        newLevelSigners
+      );
+
+      // Should revert because Level's internal levelId (99) != levelId being updated (1)
+      await expect(
+        account.connect(owner).updateLevel(1, await newLevel.getAddress())
+      ).to.be.revertedWithCustomError(account, "InvalidConfiguration");
+    });
+
+    it("Should accept updateLevel with matching levelId", async () => {
+      const newLevelSigners = [fixture.others[0].address];
+      const LevelFactory = await ethers.getContractFactory("Level");
+      // Deploy Level with levelId = 1 to match the levelId being updated
+      const newLevel = await LevelFactory.deploy(
+        await account.getAddress(),
+        1, // Matching levelId
+        newLevelSigners
+      );
+
+      await account.connect(owner).updateLevel(1, await newLevel.getAddress());
+      
+      expect(await account.levelContracts(1)).to.equal(await newLevel.getAddress());
+    });
+
+    it("Should verify levelId validation prevents callback failures", async () => {
+      // This test verifies the fix: when a Level is registered with matching levelId,
+      // the onlyLevel modifier in onLevelApproved will pass because levelContracts[levelId] 
+      // will correctly point to the Level contract.
+      // 
+      // The issue: If a Level with mismatched levelId was registered, onLevelApproved 
+      // would revert because onlyLevel(levelId) checks msg.sender == levelContracts[levelId],
+      // but levelContracts[levelId] would point to a different contract (or address(0)).
+      //
+      // The fix: We now validate that Level's internal levelId matches the assigned levelId
+      // during registration, preventing this mismatch from occurring.
+      
+      const newLevelSigners = [fixture.others[0].address, fixture.others[1].address];
+      const LevelFactory = await ethers.getContractFactory("Level");
+      const nextLevelId = await account.nextLevelId();
+      
+      // Deploy Level with matching levelId
+      const newLevel = await LevelFactory.deploy(
+        await account.getAddress(),
+        nextLevelId,
+        newLevelSigners
+      );
+
+      // Verify the Level's internal levelId matches what will be assigned
+      expect(await newLevel.levelId()).to.equal(nextLevelId);
+      
+      // Add the level (should succeed because levelId matches)
+      await account.connect(owner).addLevel(await newLevel.getAddress());
+      
+      // Verify the level is registered correctly
+      expect(await account.levelContracts(nextLevelId)).to.equal(await newLevel.getAddress());
+      
+      // Verify that the onlyLevel modifier would pass:
+      // msg.sender (newLevel) == levelContracts[nextLevelId] (newLevel)
+      // This ensures onLevelApproved callbacks will succeed
+      const registeredAddress = await account.levelContracts(nextLevelId);
+      expect(registeredAddress).to.equal(await newLevel.getAddress());
+    });
   });
 
   describe("Amount-Based Routing", () => {

@@ -338,9 +338,19 @@ contract Level {
     function getTimelockRemaining(bytes32 txHash) external view returns (uint256) {
         ApprovalState memory state = approvalStates[txHash];
         
-        if (state.timelockEnd == 0) return 0;
-        if (block.timestamp >= state.timelockEnd) return 0;
+        // Return 0 if transaction not submitted
+        if (!state.submitted) {
+            return 0;
+        }
         
+        // Check if timelock has been started (quorum reached)
+        // timelockEnd will be > 0 only after quorum is reached
+        // Use comparison with block.timestamp to avoid strict equality check
+        if (state.timelockEnd <= block.timestamp) {
+            return 0;
+        }
+        
+        // Safe subtraction: we know timelockEnd > block.timestamp at this point
         return state.timelockEnd - block.timestamp;
     }
     
@@ -348,20 +358,26 @@ contract Level {
     
     /**
      * @dev Handle quorum reached - start timelock
+     * @dev Only starts timelock once - additional signatures after quorum do not reset it
      */
     function _handleQuorumReached(bytes32 txHash) internal {
         ApprovalState storage state = approvalStates[txHash];
         
         if (state.timelockDuration > 0) {
-            // Start timelock
-            state.timelockEnd = block.timestamp + state.timelockDuration;
-            emit QuorumReached(txHash, state.timelockEnd);
+            // Only start timelock if it hasn't been started yet
+            // This prevents griefing attacks where additional signers reset the timelock
+            if (state.timelockEnd == 0) {
+                state.timelockEnd = block.timestamp + state.timelockDuration;
+                emit QuorumReached(txHash, state.timelockEnd);
+            }
         } else {
-            // No timelock - approve immediately
-            state.approved = true;
-            emit LevelApproved(txHash);
-            
-            IMultiLevelAccount(multiLevelAccount).onLevelApproved(txHash, levelId);
+            // No timelock - approve immediately (only once)
+            if (!state.approved) {
+                state.approved = true;
+                emit LevelApproved(txHash);
+                
+                IMultiLevelAccount(multiLevelAccount).onLevelApproved(txHash, levelId);
+            }
         }
     }
 }

@@ -7,5 +7,7 @@ interface ILevel {
         uint256 requiredQuorum,
         uint256 timelockDuration
     ) external;
+    
+    function levelId() external view returns (uint256);
 }
 
