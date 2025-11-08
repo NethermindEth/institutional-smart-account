@@ -394,7 +394,15 @@ describe("Gas Profiling", () => {
 
     describe("addSigner() - Signer Management", () => {
       it("Should profile gas for addSigner()", async () => {
-        const tx = await level1.connect(account).addSigner(fixture.others[3].address);
+        // Impersonate the account contract to call level functions
+        await ethers.provider.send("hardhat_impersonateAccount", [await account.getAddress()]);
+        await owner.sendTransaction({
+          to: await account.getAddress(),
+          value: ethers.parseEther("1")
+        });
+        const accountSigner = await ethers.getSigner(await account.getAddress());
+        
+        const tx = await level1.connect(accountSigner).addSigner(fixture.others[3].address);
         const receipt = await tx.wait();
         expect(receipt).to.not.be.null;
       });
@@ -402,7 +410,15 @@ describe("Gas Profiling", () => {
 
     describe("removeSigner() - Signer Removal", () => {
       it("Should profile gas for removeSigner()", async () => {
-        const tx = await level1.connect(account).removeSigner(fixture.ops3.address);
+        // Impersonate the account contract to call level functions
+        await ethers.provider.send("hardhat_impersonateAccount", [await account.getAddress()]);
+        await owner.sendTransaction({
+          to: await account.getAddress(),
+          value: ethers.parseEther("1")
+        });
+        const accountSigner = await ethers.getSigner(await account.getAddress());
+        
+        const tx = await level1.connect(accountSigner).removeSigner(fixture.ops3.address);
         const receipt = await tx.wait();
         expect(receipt).to.not.be.null;
       });
@@ -642,7 +658,22 @@ describe("Gas Profiling", () => {
   describe("Edge Cases - Gas Profiling", () => {
     it("Should profile gas with maximum signers in level", async () => {
       // Create a level with many signers
-      const manySigners = Array.from({ length: 20 }, (_, i) => fixture.others[i].address);
+      // Generate additional signers if needed
+      const signers = [];
+      const signerWallets = [];
+      for (let i = 0; i < 20; i++) {
+        if (i < fixture.others.length) {
+          signers.push(fixture.others[i].address);
+          signerWallets.push(fixture.others[i]);
+        } else {
+          // Generate a new signer if we don't have enough
+          const wallet = ethers.Wallet.createRandom();
+          signers.push(wallet.address);
+          // Connect the wallet to the provider for signing
+          signerWallets.push(await ethers.getSigner(wallet.address));
+        }
+      }
+      const manySigners = signers;
       const LevelFactory = await ethers.getContractFactory("Level");
       const largeLevel = await LevelFactory.deploy(
         await account.getAddress(),
@@ -683,9 +714,38 @@ describe("Gas Profiling", () => {
       const events = await account.queryFilter(filter);
       const txHash = events[events.length - 1].args[0];
 
-      // Sign with multiple signers
+      // The transaction was submitted to level1 (because amount 5000 routes to level1)
+      // But we want to test largeLevel, so let's submit a transaction directly to largeLevel
+      // First, let's create a new transaction hash and submit it to largeLevel
+      const largeLevelTxHash = ethers.keccak256(ethers.toUtf8Bytes("large-level-gas-test"));
+      await ethers.provider.send("hardhat_impersonateAccount", [await account.getAddress()]);
+      await owner.sendTransaction({
+        to: await account.getAddress(),
+        value: ethers.parseEther("1")
+      });
+      const accountSigner = await ethers.getSigner(await account.getAddress());
+      
+      await largeLevel.connect(accountSigner).submitTransaction(largeLevelTxHash, 10, 3600);
+
+      // Sign with multiple signers using the signerWallets array
       for (let i = 0; i < 10; i++) {
-        await largeLevel.connect(await ethers.getSigner(manySigners[i])).sign(txHash);
+        if (i < signerWallets.length) {
+          // For fixture signers, use them directly
+          if (i < fixture.others.length) {
+            await largeLevel.connect(fixture.others[i]).sign(largeLevelTxHash);
+          } else {
+            // For generated wallets, fund them first
+            const wallet = signerWallets[i];
+            await owner.sendTransaction({
+              to: await wallet.getAddress(),
+              value: ethers.parseEther("1")
+            });
+            // Impersonate the wallet address to sign
+            await ethers.provider.send("hardhat_impersonateAccount", [await wallet.getAddress()]);
+            const walletSigner = await ethers.getSigner(await wallet.getAddress());
+            await largeLevel.connect(walletSigner).sign(largeLevelTxHash);
+          }
+        }
       }
     });
 
