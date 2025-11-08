@@ -7,7 +7,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { MultiLevelAccountSDK } from "../../sdk/src/MultiLevelAccountSDK";
-import { deploySDKFixture, SDKFixture } from "./helpers/sdkFixtures";
+import { deploySDKFixture, SDKFixture, createViemClientsFromEthersSigner } from "./helpers/sdkFixtures";
 import {
   SCENARIO_HAPPY_PATH,
   SCENARIO_EARLY_DENIAL,
@@ -381,10 +381,13 @@ describe("MultiLevelAccountSDK", () => {
       const txHash = await fixture.sdk.proposeTransaction(to, value, data, amount);
       
       // Create signer interface for ops1
+      const { publicClient: opsPublicClient, walletClient: opsWalletClient } =
+        await createViemClientsFromEthersSigner(fixture.ops1);
       const sdkForOps1 = new MultiLevelAccountSDK(
         await fixture.account.getAddress(),
         await fixture.entryPoint.getAddress(),
-        fixture.ops1
+        opsPublicClient,
+        opsWalletClient
       );
       
       const signerInterface = sdkForOps1.getSignerInterface(1);
@@ -409,10 +412,13 @@ describe("MultiLevelAccountSDK", () => {
       
       // Create signer interface for ops1
       const entryPointAddress = await fixture.entryPoint.getAddress();
+      const { publicClient: opsPublicClient2, walletClient: opsWalletClient2 } =
+        await createViemClientsFromEthersSigner(fixture.ops1);
       const sdkForOps1 = new MultiLevelAccountSDK(
         await fixture.account.getAddress(),
         entryPointAddress,
-        fixture.ops1
+        opsPublicClient2,
+        opsWalletClient2
       );
       
       const signerInterface = sdkForOps1.getSignerInterface(1);

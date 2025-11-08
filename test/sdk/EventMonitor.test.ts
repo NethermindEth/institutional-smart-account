@@ -75,19 +75,34 @@ describe("EventMonitor", () => {
       const txHash = await fixture.sdk.proposeTransaction(to, value, data, amount);
       
       let denied = false;
-      const unsubscribe = fixture.sdk.monitorTransaction(txHash, (status) => {
-        if (status.levelStatuses.some(ls => ls.denied)) {
-          denied = true;
-          unsubscribe();
-        }
+      let unsubscribe: (() => void) | null = null;
+      
+      await new Promise<void>(async (resolve) => {
+        unsubscribe = fixture.sdk.monitorTransaction(txHash, (status) => {
+          if (status.levelStatuses.some(ls => ls.denied)) {
+            denied = true;
+            if (unsubscribe) {
+              unsubscribe();
+              unsubscribe = null;
+            }
+            resolve();
+          }
+        });
+        
+        // Deny transaction
+        await fixture.level1.connect(fixture.ops1).deny(txHash);
+        await ethers.provider.send("evm_mine", []);
+        
+        // Timeout fallback
+        setTimeout(() => {
+          if (unsubscribe) {
+            unsubscribe();
+            unsubscribe = null;
+          }
+          resolve();
+        }, 5000);
       });
       
-      // Deny transaction
-      await fixture.level1.connect(fixture.ops1).deny(txHash);
-      
-      await ethers.provider.send("evm_mine", []);
-      
-      unsubscribe();
       expect(denied).to.be.true;
     });
     

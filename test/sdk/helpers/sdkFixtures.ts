@@ -5,8 +5,76 @@
  */
 
 import { ethers } from "hardhat";
+import { createPublicClient, createWalletClient, http, type PublicClient, type WalletClient } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { hardhat } from "viem/chains";
 import { MultiLevelAccountSDK } from "../../../sdk/src/MultiLevelAccountSDK";
 import { SignerMap } from "../scenarios/coSignerBehaviors";
+import { createHardhatPublicClient, hardhatTransport } from "../../helpers/hardhat-transport";
+
+/**
+ * Helper to create viem clients from ethers signer
+ * Uses hardhat's account system to get private keys
+ */
+export async function createViemClientsFromEthersSigner(signer: any): Promise<{ publicClient: PublicClient; walletClient: WalletClient }> {
+  // Use hardhat's provider directly via custom transport
+  // This avoids HTTP connection issues in test environment
+  const publicClient = createHardhatPublicClient();
+  
+  // Get private key from hardhat's account system
+  // Hardhat uses deterministic accounts with a known mnemonic
+  const signerAddress = await signer.getAddress();
+  
+  // Get all signers and find the matching one
+  const allSigners = await ethers.getSigners();
+  let signerIndex = -1;
+  for (let i = 0; i < allSigners.length; i++) {
+    if ((await allSigners[i].getAddress()) === signerAddress) {
+      signerIndex = i;
+      break;
+    }
+  }
+  
+  if (signerIndex < 0) {
+    throw new Error(`Signer with address ${signerAddress} not found in hardhat accounts`);
+  }
+  
+  // Hardhat's default mnemonic: "test test test test test test test test test test test junk"
+  // Derive private key using BIP44 path: m/44'/60'/0'/0/{index}
+  const hre = require("hardhat");
+  const networkConfig = hre.network.config;
+  const accounts = networkConfig.accounts;
+  
+  let privateKey: string;
+  if (Array.isArray(accounts) && accounts[signerIndex]) {
+    // Accounts array contains private keys directly
+    privateKey = accounts[signerIndex];
+  } else {
+    // Use hardhat's default mnemonic to derive
+    // Hardhat's default: "test test test test test test test test test test test junk"
+    const mnemonic = "test test test test test test test test test test test junk";
+    const { HDKey } = require("@scure/bip32");
+    const { mnemonicToSeedSync } = require("@scure/bip39");
+    const seed = mnemonicToSeedSync(mnemonic);
+    const hdkey = HDKey.fromMasterSeed(seed);
+    const child = hdkey.derive(`m/44'/60'/0'/0/${signerIndex}`);
+    privateKey = "0x" + Buffer.from(child.privateKey!).toString("hex");
+  }
+  
+  // Ensure private key has 0x prefix
+  if (!privateKey.startsWith("0x")) {
+    privateKey = "0x" + privateKey;
+  }
+  
+  const account = privateKeyToAccount(privateKey as `0x${string}`);
+  const walletClient = createWalletClient({
+    account,
+    chain: hardhat,
+    transport: hardhatTransport()
+  });
+  
+  return { publicClient, walletClient };
+}
 
 export interface SDKFixture {
   account: any;
@@ -108,11 +176,15 @@ export async function deploySDKFixture(): Promise<SDKFixture> {
     [3600, 7200, 86400] // 1hr, 2hr, 24hr
   );
   
+  // Create viem clients for SDK
+  const { publicClient, walletClient } = await createViemClientsFromEthersSigner(owner);
+  
   // Create SDK instance
   const sdk = new MultiLevelAccountSDK(
     accountAddress,
     await entryPoint.getAddress(),
-    owner // Use owner as signer for SDK
+    publicClient,
+    walletClient
   );
   
   // Create signer map
@@ -144,4 +216,7 @@ export async function deploySDKFixture(): Promise<SDKFixture> {
     signerMap
   };
 }
+
+// Export helper for use in other test files
+export { createViemClientsFromEthersSigner };
 

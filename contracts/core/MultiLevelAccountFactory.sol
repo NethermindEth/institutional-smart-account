@@ -48,8 +48,12 @@ contract MultiLevelAccountFactory {
         MultiLevelAccount account,
         Level[] memory levels
     ) {
-        // Prepare initCode for CREATE2 (must match computation in getAddress)
-        bytes memory initCode = _getInitCode(owner);
+        // Compute hash of levelSigners to include in CREATE2 address
+        // This prevents front-running attacks where attacker deploys with different signers
+        bytes32 levelSignersHash = keccak256(abi.encode(levelSigners));
+        
+        // Prepare initCode for CREATE2 (must match computation in computeAccountAddress)
+        bytes memory initCode = _getInitCode(owner, levelSignersHash);
         
         // Compute predicted address first
         address predictedAddress = _computeCreate2Address(initCode, salt);
@@ -59,7 +63,7 @@ contract MultiLevelAccountFactory {
         address accountAddress = Create2.deploy(0, saltBytes, initCode);
         
         // Verify the deployed address matches the predicted address
-        // This ensures getAddress() returns the correct counterfactual address
+        // This ensures computeAccountAddress() returns the correct counterfactual address
         require(accountAddress == predictedAddress, "Address mismatch");
         
         account = MultiLevelAccount(payable(accountAddress));
@@ -81,6 +85,9 @@ contract MultiLevelAccountFactory {
             emit LevelCreated(address(levels[i]), levelIds[i], levelSigners[i]);
         }
         
+        // Verify levelSigners match the hash stored in the account
+        account.verifyLevelSigners(levelSigners);
+        
         // Complete initialization to prevent further addLevelDuringInit calls
         account.completeInitialization();
         
@@ -90,30 +97,35 @@ contract MultiLevelAccountFactory {
     /**
      * @notice Compute the counterfactual address of an account
      * @param owner Account owner
+     * @param levelSigners Array of signer arrays (one per level)
      * @param salt Salt for CREATE2
      */
     function computeAccountAddress(
         address owner,
+        address[][] calldata levelSigners,
         uint256 salt
     ) external view returns (address) {
-        bytes memory initCode = _getInitCode(owner);
+        bytes32 levelSignersHash = keccak256(abi.encode(levelSigners));
+        bytes memory initCode = _getInitCode(owner, levelSignersHash);
         return _computeCreate2Address(initCode, salt);
     }
 
     /**
      * @dev Internal function to compute initCode for CREATE2
      * @param owner Account owner
+     * @param levelSignersHash Hash of levelSigners configuration
      * @return initCode The initialization code for MultiLevelAccount deployment
      */
-    function _getInitCode(address owner) internal view returns (bytes memory) {
+    function _getInitCode(address owner, bytes32 levelSignersHash) internal view returns (bytes memory) {
         // For CREATE2, we need the exact initCode that would be used in deployment
         // When using `new Contract(args)`, Solidity does: creationCode + abi.encode(args)
-        // The constructor signature is: constructor(IEntryPoint _entryPoint, address _owner)
+        // The constructor signature is: constructor(IEntryPoint _entryPoint, address _owner, bytes32 _levelSignersHash)
         bytes memory creationCode = type(MultiLevelAccount).creationCode;
         
-        // Encode constructor parameters: (IEntryPoint, address)
-        // This must match the exact constructor signature
-        bytes memory constructorArgs = abi.encode(entryPoint, owner);
+        // Encode constructor parameters: (IEntryPoint, address, bytes32)
+        // Including levelSignersHash ensures CREATE2 address depends on levelSigners configuration
+        // This prevents front-running attacks where attacker deploys with different signers
+        bytes memory constructorArgs = abi.encode(entryPoint, owner, levelSignersHash);
         
         // Combine creationCode and constructor args using bytes.concat (available in Solidity 0.8.4+)
         // This is the most reliable way to concatenate byte arrays

@@ -479,7 +479,8 @@ describe("Gas Profiling", () => {
     describe("computeAccountAddress() - Counterfactual Address Computation", () => {
       it("Should profile gas for computeAccountAddress()", async () => {
         const salt = 12345n;
-        const address = await factory.computeAccountAddress(owner.address, salt);
+        const levelSigners = [[fixture.ops1.address]];
+        const address = await factory.computeAccountAddress(owner.address, levelSigners, salt);
         expect(address).to.be.a("string");
         expect(address).to.not.equal(ethers.ZeroAddress);
       });

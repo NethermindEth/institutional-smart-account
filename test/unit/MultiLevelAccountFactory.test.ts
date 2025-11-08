@@ -129,27 +129,33 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
   });
 
   describe("Counterfactual Address", () => {
+    let levelSigners: string[][];
+    
+    beforeEach(() => {
+      levelSigners = [[ops1.address]];
+    });
+
     it("Should compute counterfactual address", async () => {
       const salt = 12345;
-      const computedAddress = await factory.computeAccountAddress(owner.address, salt);
+      const computedAddress = await factory.computeAccountAddress(owner.address, levelSigners, salt);
       
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
       expect(computedAddress).to.be.a("string");
     });
 
     it("Should compute address with zero salt", async () => {
-      const computedAddress = await factory.computeAccountAddress(owner.address, 0);
+      const computedAddress = await factory.computeAccountAddress(owner.address, levelSigners, 0);
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
     it("Should compute address with large salt", async () => {
       const largeSalt = ethers.MaxUint256;
-      const computedAddress = await factory.computeAccountAddress(owner.address, largeSalt);
+      const computedAddress = await factory.computeAccountAddress(owner.address, levelSigners, largeSalt);
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
     it("Should compute address with zero address owner", async () => {
-      const computedAddress = await factory.computeAccountAddress(ethers.ZeroAddress, 1);
+      const computedAddress = await factory.computeAccountAddress(ethers.ZeroAddress, levelSigners, 1);
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
@@ -157,8 +163,8 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       // The factory now uses CREATE2, so computeAccountAddress should match actual deployments
       const salt1 = 1n;
       const salt2 = 2n;
-      const address1 = await factory.computeAccountAddress(owner.address, salt1);
-      const address2 = await factory.computeAccountAddress(owner.address, salt2);
+      const address1 = await factory.computeAccountAddress(owner.address, levelSigners, salt1);
+      const address2 = await factory.computeAccountAddress(owner.address, levelSigners, salt2);
       
       // These should be different (CREATE2 formula with different salts)
       expect(address1).to.not.equal(address2, "Addresses should be different for different salts");
@@ -177,8 +183,8 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       expect(owner1.address).to.not.equal(owner2.address, "Test setup: owners must be different");
       
       // Get addresses with same salt but different owners
-      const address1 = await factory.computeAccountAddress(owner1.address, 1);
-      const address2 = await factory.computeAccountAddress(owner2.address, 1);
+      const address1 = await factory.computeAccountAddress(owner1.address, levelSigners, 1);
+      const address2 = await factory.computeAccountAddress(owner2.address, levelSigners, 1);
       
       // Different owners should produce different addresses
       // The owner is part of the constructor args, so different owners = different initCode
@@ -187,11 +193,24 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       expect(address1).to.not.equal(address2);
     });
 
+    it("Should compute different addresses for different levelSigners", async () => {
+      // This test verifies the fix: different levelSigners produce different addresses
+      const levelSigners1 = [[ops1.address]];
+      const levelSigners2 = [[ops2.address]];
+      
+      const address1 = await factory.computeAccountAddress(owner.address, levelSigners1, 1);
+      const address2 = await factory.computeAccountAddress(owner.address, levelSigners2, 1);
+      
+      // Different levelSigners should produce different addresses
+      expect(address1).to.not.equal(ethers.ZeroAddress);
+      expect(address2).to.not.equal(ethers.ZeroAddress);
+      expect(address1).to.not.equal(address2, "Addresses should be different for different levelSigners");
+    });
+
     it("Should match computeAccountAddress with actual deployed address", async () => {
       const salt = 12345;
-      const predictedAddress = await factory.computeAccountAddress(owner.address, salt);
+      const predictedAddress = await factory.computeAccountAddress(owner.address, levelSigners, salt);
       
-      const levelSigners = [[ops1.address]];
       const tx = await factory.createAccount(owner.address, levelSigners, salt);
       const receipt = await tx.wait();
       
@@ -218,7 +237,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       // This test verifies the fix for the security issue:
       // Users can safely pre-fund the counterfactual address before deployment
       const salt = 0;
-      const predictedAddress = await factory.computeAccountAddress(owner.address, salt);
+      const predictedAddress = await factory.computeAccountAddress(owner.address, levelSigners, salt);
       
       // Pre-fund the predicted address
       const funder = owner;
@@ -233,7 +252,6 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       expect(balanceBefore).to.equal(fundAmount);
       
       // Deploy the account using CREATE2
-      const levelSigners = [[ops1.address]];
       const tx = await factory.createAccount(owner.address, levelSigners, salt);
       const receipt = await tx.wait();
       
@@ -265,6 +283,130 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
           actualAddress
         ) as unknown as MultiLevelAccount;
         expect(await account.owner()).to.equal(owner.address);
+      }
+    });
+  });
+
+  describe("Security - Front-Running Prevention", () => {
+    it("Should prevent front-running attack with different levelSigners", async () => {
+      // This test verifies the fix: an attacker cannot pre-deploy an account
+      // with the same owner and salt but different levelSigners
+      const salt = 999;
+      const legitimateLevelSigners = [
+        [ops1.address, ops2.address, ops3.address],
+        [comp1.address, comp2.address]
+      ];
+      
+      // Compute the legitimate address
+      const legitimateAddress = await factory.computeAccountAddress(
+        owner.address,
+        legitimateLevelSigners,
+        salt
+      );
+      
+      // Attacker tries to deploy with different levelSigners (attacker-controlled)
+      const allSigners = await ethers.getSigners();
+      const attacker = allSigners.length > 9 ? allSigners[9] : allSigners[0];
+      const attackerLevelSigners = [
+        [attacker.address], // Attacker controls all signers
+        [attacker.address]
+      ];
+      
+      // Attacker's address will be different because levelSigners are different
+      const attackerAddress = await factory.computeAccountAddress(
+        owner.address,
+        attackerLevelSigners,
+        salt
+      );
+      
+      // Verify addresses are different (fix prevents attack)
+      expect(legitimateAddress).to.not.equal(attackerAddress);
+      
+      // Attacker tries to deploy their version
+      await factory.connect(attacker).createAccount(
+        owner.address,
+        attackerLevelSigners,
+        salt
+      );
+      
+      // Now legitimate user tries to deploy - should succeed at different address
+      const tx = await factory.createAccount(
+        owner.address,
+        legitimateLevelSigners,
+        salt
+      );
+      const receipt = await tx.wait();
+      
+      const accountCreatedEvent = receipt?.logs
+        .map((log) => {
+          try {
+            return factory.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed && parsed.name === "AccountCreated");
+      
+      expect(accountCreatedEvent).to.not.be.null;
+      
+      if (accountCreatedEvent && accountCreatedEvent.args) {
+        const actualAddress = accountCreatedEvent.args[0];
+        // Should deploy at the legitimate address, not the attacker's address
+        expect(actualAddress).to.equal(legitimateAddress);
+        expect(actualAddress).to.not.equal(attackerAddress);
+        
+        // Verify the account has the correct levelSigners
+        const account = await ethers.getContractAt(
+          "MultiLevelAccount",
+          actualAddress
+        ) as unknown as MultiLevelAccount;
+        
+        // Verify levelSigners match
+        await account.verifyLevelSigners(legitimateLevelSigners);
+        
+        // Verify attacker's levelSigners don't match
+        await expect(
+          account.verifyLevelSigners(attackerLevelSigners)
+        ).to.be.revertedWithCustomError(account, "InvalidConfiguration");
+      }
+    });
+
+    it("Should verify levelSigners hash matches after deployment", async () => {
+      const levelSigners = [
+        [ops1.address, ops2.address],
+        [comp1.address]
+      ];
+      
+      const tx = await factory.createAccount(owner.address, levelSigners, 0);
+      const receipt = await tx.wait();
+      
+      const accountCreatedEvent = receipt?.logs
+        .map((log) => {
+          try {
+            return factory.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed && parsed.name === "AccountCreated");
+      
+      expect(accountCreatedEvent).to.not.be.null;
+      
+      if (accountCreatedEvent && accountCreatedEvent.args) {
+        const accountAddress = accountCreatedEvent.args[0];
+        const account = await ethers.getContractAt(
+          "MultiLevelAccount",
+          accountAddress
+        ) as unknown as MultiLevelAccount;
+        
+        // Verify levelSigners match the hash
+        await account.verifyLevelSigners(levelSigners);
+        
+        // Verify wrong levelSigners don't match
+        const wrongLevelSigners = [[ops3.address]];
+        await expect(
+          account.verifyLevelSigners(wrongLevelSigners)
+        ).to.be.revertedWithCustomError(account, "InvalidConfiguration");
       }
     });
   });

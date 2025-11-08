@@ -1,71 +1,45 @@
-import { Contract, Provider, Signer } from "ethers";
+import type { Address, Hex, PublicClient, WalletClient } from "viem";
+import { createPublicClient, createWalletClient, http } from "viem";
 import { UserOpBuilder } from "./UserOpBuilder";
 import { SignerInterface } from "./SignerInterface";
 import { EventMonitor } from "./EventMonitor";
 import { TransactionStatus, PackedUserOperation } from "./types";
+import { MULTI_LEVEL_ACCOUNT_ABI, ENTRY_POINT_ABI } from "./contracts/abis";
 
 export class MultiLevelAccountSDK {
-  private account: Contract;
-  private entryPoint: Contract;
-  private provider: Provider;
-  private signer?: Signer;
+  private accountAddress: Address;
+  private entryPointAddress: Address;
+  private publicClient: PublicClient;
+  private walletClient?: WalletClient;
   private userOpBuilder: UserOpBuilder;
   
   constructor(
-    accountAddress: string,
-    entryPointAddress: string,
-    providerOrSigner: Provider | Signer,
-    accountAbi?: any[],
-    entryPointAbi?: any[]
+    accountAddress: Address | string,
+    entryPointAddress: Address | string,
+    publicClientOrRpcUrl: PublicClient | string,
+    walletClient?: WalletClient,
+    bundlerUrl?: string
   ) {
-    // Check if providerOrSigner is a Signer by checking for signMessage method
-    if ('signMessage' in providerOrSigner && 'getAddress' in providerOrSigner) {
-      this.signer = providerOrSigner as Signer;
-      this.provider = (providerOrSigner as Signer).provider!;
+    this.accountAddress = accountAddress as Address;
+    this.entryPointAddress = entryPointAddress as Address;
+    
+    // Create PublicClient if RPC URL provided, otherwise use provided client
+    if (typeof publicClientOrRpcUrl === "string") {
+      this.publicClient = createPublicClient({
+        transport: http(publicClientOrRpcUrl)
+      });
     } else {
-      this.provider = providerOrSigner as Provider;
+      this.publicClient = publicClientOrRpcUrl;
     }
     
-    // Default ABIs - in production, load from JSON files
-    const defaultAccountAbi = accountAbi || [
-      "function execute(address to, uint256 value, bytes data, uint256 amount)",
-      "function executeApprovedTransaction(bytes32 txHash)",
-      "function getTransaction(bytes32 txHash) view returns ((address to, uint256 value, bytes data, uint256 amount, uint256 proposedAt, (uint256 minAmount, uint256 maxAmount, uint256[] levelIds, uint256[] quorums, uint256[] timelocks) config))",
-      "function currentLevelIndex(bytes32 txHash) view returns (uint256)",
-      "function fullyApproved(bytes32 txHash) view returns (bool)",
-      "function nonce() view returns (uint256)",
-      "function levelContracts(uint256 levelId) view returns (address)",
-      "function configureAmountRange(uint256 minAmount, uint256 maxAmount, uint256[] levelIds, uint256[] quorums, uint256[] timelocks)",
-      "function addLevel(address levelAddress) returns (uint256)",
-      "event TransactionProposed(bytes32 indexed txHash, address indexed to, uint256 value, uint256 amount, uint256[] levelIds, uint256[] quorums)",
-      "event LevelCompleted(bytes32 indexed txHash, uint256 indexed levelId, uint256 currentIndex)",
-      "event ReadyForExecution(bytes32 indexed txHash)",
-      "event TransactionExecuted(bytes32 indexed txHash, address indexed to, uint256 value)",
-      "event TransactionDenied(bytes32 indexed txHash, uint256 indexed levelId, address indexed denier)"
-    ];
-    
-    const defaultEntryPointAbi = entryPointAbi || [
-      "function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, bytes32 accountGasLimits, uint256 preVerificationGas, bytes32 gasFees, bytes paymasterAndData, bytes signature)[] ops, address payable beneficiary)",
-      "function getUserOpHash((address sender, uint256 nonce, bytes initCode, bytes callData, bytes32 accountGasLimits, uint256 preVerificationGas, bytes32 gasFees, bytes paymasterAndData, bytes signature) userOp) view returns (bytes32)"
-    ];
-    
-    this.account = new Contract(
-      accountAddress,
-      defaultAccountAbi,
-      this.signer || this.provider
-    );
-    
-    // EntryPoint needs a signer to send transactions (handleOps)
-    this.entryPoint = new Contract(
-      entryPointAddress,
-      defaultEntryPointAbi,
-      this.signer || this.provider
-    );
+    this.walletClient = walletClient;
     
     this.userOpBuilder = new UserOpBuilder(
-      this.account,
-      this.entryPoint,
-      this.provider
+      this.accountAddress,
+      this.entryPointAddress,
+      this.publicClient,
+      this.walletClient,
+      bundlerUrl
     );
   }
   
@@ -75,57 +49,92 @@ export class MultiLevelAccountSDK {
    * Propose transaction via 4337 UserOp
    */
   async proposeTransaction(
-    to: string,
+    to: Address | string,
     value: bigint,
-    data: string,
+    data: Hex | string,
     amount: bigint,
     bundlerUrl?: string
   ): Promise<string> {
-    if (!this.signer) {
-      throw new Error('Signer required');
+    if (!this.walletClient) {
+      throw new Error('WalletClient required');
     }
     
     // Build UserOp
     const userOp = await this.userOpBuilder.buildUserOp({
-      to,
+      to: to as Address,
       value,
-      data,
+      data: data as Hex,
       amount
     });
     
     // Sign UserOp
-    const signedUserOp = await this.userOpBuilder.signUserOp(
-      userOp,
-      this.signer
-    );
+    const signedUserOp = await this.userOpBuilder.signUserOp(userOp);
     
     // Submit to bundler (or send directly to EntryPoint for testing)
-    if (bundlerUrl) {
-      const txHash = await this._submitToBundler(signedUserOp, bundlerUrl);
-      return txHash;
+    if (bundlerUrl || this.userOpBuilder["bundlerUrl"]) {
+      const userOpHash = await this.userOpBuilder.submitToBundler(signedUserOp, bundlerUrl);
+      
+      // Wait for transaction and extract txHash from event
+      // Note: This is a simplified approach - in production you'd want to poll for the receipt
+      return userOpHash;
     } else {
       // Direct submission (for testing)
-      // The handleOps function expects PackedUserOperation[] which matches our interface
-      // Just pass the signedUserOp directly - ethers will handle the conversion
-      const tx = await this.entryPoint.handleOps(
-        [signedUserOp],
-        await this.signer.getAddress()
-      );
-      const receipt = await tx.wait();
+      if (!this.walletClient) {
+        throw new Error("WalletClient required");
+      }
       
-      // Extract txHash from event
-      const events = receipt?.logs
-        .map((log) => {
-          try {
-            return this.account.interface.parseLog(log);
-          } catch {
-            return null;
-          }
-        })
-        .filter((parsed) => parsed && parsed.name === 'TransactionProposed');
+      const [account] = await this.walletClient.getAddresses();
+      if (!account) {
+        throw new Error("No account found in wallet client");
+      }
       
-      if (events && events.length > 0 && events[0]?.args) {
-        return events[0].args[0]; // txHash
+      // Submit directly to EntryPoint using viem
+      const hash = await this.walletClient.writeContract({
+        address: this.entryPointAddress,
+        abi: ENTRY_POINT_ABI,
+        functionName: "handleOps",
+        args: [
+          [{
+            sender: signedUserOp.sender as Address,
+            nonce: signedUserOp.nonce,
+            initCode: signedUserOp.initCode as Hex,
+            callData: signedUserOp.callData as Hex,
+            accountGasLimits: signedUserOp.accountGasLimits as Hex,
+            preVerificationGas: signedUserOp.preVerificationGas,
+            gasFees: signedUserOp.gasFees as Hex,
+            paymasterAndData: signedUserOp.paymasterAndData as Hex,
+            signature: signedUserOp.signature as Hex
+          }],
+          account
+        ],
+        account,
+        chain: undefined
+      });
+      
+      // Wait for transaction receipt
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      
+      // Extract txHash from TransactionProposed event
+      const events = await this.publicClient.getLogs({
+        address: this.accountAddress,
+        event: {
+          type: "event",
+          name: "TransactionProposed",
+          inputs: [
+            { name: "txHash", type: "bytes32", indexed: true },
+            { name: "to", type: "address", indexed: true },
+            { name: "value", type: "uint256", indexed: false },
+            { name: "amount", type: "uint256", indexed: false },
+            { name: "levelIds", type: "uint256[]", indexed: false },
+            { name: "quorums", type: "uint256[]", indexed: false }
+          ]
+        },
+        fromBlock: receipt.blockNumber,
+        toBlock: receipt.blockNumber
+      });
+      
+      if (events && events.length > 0 && events[0].args?.txHash) {
+        return events[0].args.txHash as string;
       }
       
       throw new Error("TransactionProposed event not found");
@@ -139,9 +148,10 @@ export class MultiLevelAccountSDK {
    */
   getSignerInterface(levelId: number): SignerInterface {
     return new SignerInterface(
-      this.account,
+      this.accountAddress,
       levelId,
-      this.signer || this.provider
+      this.publicClient,
+      this.walletClient
     );
   }
   
@@ -155,8 +165,8 @@ export class MultiLevelAccountSDK {
     callback: (status: TransactionStatus) => void
   ): () => void {
     const monitor = new EventMonitor(
-      this.account,
-      this.provider
+      this.accountAddress,
+      this.publicClient
     );
     
     return monitor.watchTransaction(txHash, callback);
@@ -167,8 +177,8 @@ export class MultiLevelAccountSDK {
    */
   async getTransactionStatus(txHash: string): Promise<TransactionStatus> {
     const monitor = new EventMonitor(
-      this.account,
-      this.provider
+      this.accountAddress,
+      this.publicClient
     );
     
     return await monitor.getTransactionStatus(txHash);
@@ -179,10 +189,26 @@ export class MultiLevelAccountSDK {
   /**
    * Execute fully approved transaction
    */
-  async executeApprovedTransaction(txHash: string): Promise<string> {
-    const tx = await this.account.executeApprovedTransaction(txHash);
-    const receipt = await tx.wait();
-    return receipt!.hash;
+  async executeApprovedTransaction(txHash: Hex | string): Promise<string> {
+    if (!this.walletClient) {
+      throw new Error("WalletClient required");
+    }
+    
+    const [account] = await this.walletClient.getAddresses();
+    if (!account) {
+      throw new Error("No account found in wallet client");
+    }
+    
+    const hash = await this.walletClient.writeContract({
+      address: this.accountAddress,
+      abi: MULTI_LEVEL_ACCOUNT_ABI,
+      functionName: "executeApprovedTransaction",
+      args: [txHash as Hex],
+      account,
+      chain: undefined
+    });
+    
+    return hash;
   }
   
   // ============ Configuration (Owner Only) ============
@@ -196,39 +222,31 @@ export class MultiLevelAccountSDK {
     levelIds: number[],
     quorums: number[],
     timelocks: number[]
-  ): Promise<void> {
-    if (!this.signer) throw new Error('Signer required');
-    
-    const tx = await this.account.connect(this.signer).configureAmountRange(
-      minAmount,
-      maxAmount,
-      levelIds,
-      quorums,
-      timelocks
-    );
-    
-    await tx.wait();
-  }
-  
-  // ============ Internal ============
-  
-  private async _submitToBundler(
-    userOp: PackedUserOperation,
-    bundlerUrl: string
   ): Promise<string> {
-    const response = await fetch(bundlerUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_sendUserOperation',
-        params: [userOp, await this.entryPoint.getAddress()]
-      })
+    if (!this.walletClient) {
+      throw new Error('WalletClient required');
+    }
+    
+    const [account] = await this.walletClient.getAddresses();
+    if (!account) {
+      throw new Error("No account found in wallet client");
+    }
+    
+    const hash = await this.walletClient.writeContract({
+      address: this.accountAddress,
+      abi: MULTI_LEVEL_ACCOUNT_ABI,
+      functionName: "configureAmountRange",
+      args: [
+        minAmount,
+        maxAmount,
+        levelIds.map(id => BigInt(id)),
+        quorums.map(q => BigInt(q)),
+        timelocks.map(t => BigInt(t))
+      ],
+      account,
+      chain: undefined
     });
     
-    const result = await response.json();
-    return result.result; // userOpHash
+    return hash;
   }
 }
-

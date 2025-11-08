@@ -19,43 +19,56 @@ Complete step-by-step guide for integrating the Multi-Level Account SDK into you
 ## Installation
 
 ```bash
-npm install ethers@^6.0.0
+npm install viem permissionless
 ```
 
-The SDK requires ethers.js v6. Make sure your project uses compatible versions.
+The SDK uses `viem` for blockchain interactions and `permissionless.js` for ERC-4337 UserOperation handling.
 
 ## Basic Setup
 
 ### 1. Import Dependencies
 
 ```typescript
-import { ethers } from "ethers";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { MultiLevelAccountSDK } from "./sdk/src/MultiLevelAccountSDK";
 ```
 
-### 2. Setup Provider and Signer
+### 2. Setup viem Clients
 
 ```typescript
 // For mainnet
-const provider = new ethers.JsonRpcProvider("https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY");
+const publicClient = createPublicClient({
+  transport: http("https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY")
+});
 
 // For testnet
-const provider = new ethers.JsonRpcProvider("https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY");
+const publicClient = createPublicClient({
+  transport: http("https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY")
+});
 
 // For local development
-const provider = new ethers.JsonRpcProvider("http://localhost:8545");
+const publicClient = createPublicClient({
+  transport: http("http://localhost:8545")
+});
 
-// Create signer (owner for proposing, signers for approving)
-const owner = new ethers.Wallet(process.env.OWNER_PRIVATE_KEY!, provider);
+// Create wallet client (owner for proposing, signers for approving)
+const account = privateKeyToAccount(process.env.OWNER_PRIVATE_KEY as `0x${string}`);
+const walletClient = createWalletClient({
+  account,
+  transport: http("http://localhost:8545") // Use same RPC URL
+});
 ```
 
 ### 3. Initialize SDK
 
 ```typescript
 const sdk = new MultiLevelAccountSDK(
-  "0x...", // MultiLevelAccount contract address
-  "0x...", // ERC-4337 EntryPoint address
-  owner    // Signer (can be Provider for read-only operations)
+  "0x...",        // MultiLevelAccount contract address
+  "0x...",        // ERC-4337 EntryPoint address
+  publicClient,   // viem PublicClient
+  walletClient,   // viem WalletClient (optional, required for proposing)
+  bundlerUrl      // Optional: Bundler URL (e.g., "http://localhost:14337/rpc")
 );
 ```
 
@@ -70,11 +83,14 @@ Only the account owner can propose transactions via ERC-4337 UserOperations.
 ### Basic Proposal
 
 ```typescript
+import { parseEther } from "viem";
+
 const txHash = await sdk.proposeTransaction(
   "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb", // to: destination address
-  ethers.parseEther("1"),                       // value: ETH to send
+  parseEther("1"),                              // value: ETH to send
   "0x",                                         // data: call data (empty for simple transfers)
-  ethers.parseEther("5000")                    // amount: for routing logic
+  parseEther("5000"),                           // amount: for routing logic
+  "http://localhost:14337/rpc"                 // bundler URL (optional)
 );
 ```
 

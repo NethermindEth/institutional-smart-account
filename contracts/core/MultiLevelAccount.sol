@@ -22,6 +22,9 @@ contract MultiLevelAccount is IAccount, Ownable {
     
     IEntryPoint public immutable entryPoint;
     
+    /// @notice Hash of levelSigners configuration to prevent front-running attacks
+    bytes32 public immutable levelSignersHash;
+    
     // ============ State Variables ============
     
     /// @notice Transaction nonce for uniqueness
@@ -138,8 +141,13 @@ contract MultiLevelAccount is IAccount, Ownable {
     
     // ============ Constructor ============
     
-    constructor(IEntryPoint _entryPoint, address _owner) Ownable(_owner) {
+    constructor(
+        IEntryPoint _entryPoint,
+        address _owner,
+        bytes32 _levelSignersHash
+    ) Ownable(_owner) {
         entryPoint = _entryPoint;
+        levelSignersHash = _levelSignersHash;
         nonce = 0;
         nextLevelId = 1;
         initializationComplete = false;
@@ -320,6 +328,16 @@ contract MultiLevelAccount is IAccount, Ownable {
         levelContracts[levelId] = levelAddress;
         
         emit LevelAdded(levelId, levelAddress);
+    }
+    
+    /**
+     * @notice Verify levelSigners configuration matches the hash
+     * @dev Called by factory after all levels are added to prevent front-running
+     * @param levelSigners Array of signer arrays (one per level)
+     */
+    function verifyLevelSigners(address[][] calldata levelSigners) external view {
+        bytes32 computedHash = keccak256(abi.encode(levelSigners));
+        if (computedHash != levelSignersHash) revert InvalidConfiguration();
     }
     
     /**
