@@ -169,9 +169,11 @@ Real-time status monitoring:
 
 UserOperation construction using permissionless.js:
 
-- `buildUserOp()` - Build UserOperation struct
+- `buildUserOp()` - Build UserOperation struct (packed format for gas efficiency)
 - `signUserOp()` - Sign UserOperation
-- `submitToBundler()` - Submit to bundler via JSON-RPC
+- `submitToBundler()` - Submit to bundler via JSON-RPC (automatically converts to unpacked format)
+
+**Note**: The SDK uses packed UserOperation format internally (more gas-efficient), but automatically converts to unpacked format when submitting to bundlers (standard ERC-4337 format).
 
 ## Bundler Integration
 

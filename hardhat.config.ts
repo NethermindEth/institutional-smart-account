@@ -5,6 +5,10 @@ import "@nomicfoundation/hardhat-chai-matchers";
 import "hardhat-coverage";
 import "hardhat-gas-reporter";
 import "hardhat-contract-sizer";
+import * as dotenv from "dotenv";
+
+// Load .env file
+dotenv.config();
 
 const config: HardhatUserConfig = {
   solidity: {

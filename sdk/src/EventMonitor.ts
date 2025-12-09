@@ -45,12 +45,15 @@ export class EventMonitor {
         // Stop polling if transaction is executed or denied
         if (currentStatus.fullyApproved) {
           // Check if executed by looking for TransactionExecuted event
+          const eventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) => 
+            e.type === "event" && (e as any).name === "TransactionExecuted"
+          ) as any;
           const logs = await this.publicClient.getLogs({
             address: this.accountAddress,
             event: {
               type: "event",
               name: "TransactionExecuted",
-              inputs: MULTI_LEVEL_ACCOUNT_ABI.find(e => e.name === "TransactionExecuted")?.inputs || []
+              inputs: eventAbi?.inputs || []
             },
             args: { txHash: txHash as Hex }
           });
@@ -65,12 +68,15 @@ export class EventMonitor {
         // Check for denial
         const fromBlock =
           lastDeniedBlockChecked > 0 ? BigInt(lastDeniedBlockChecked) : 0n;
+        const deniedEventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) => 
+          e.type === "event" && (e as any).name === "TransactionDenied"
+        ) as any;
         const deniedLogs = await this.publicClient.getLogs({
           address: this.accountAddress,
           event: {
             type: "event",
             name: "TransactionDenied",
-            inputs: MULTI_LEVEL_ACCOUNT_ABI.find(e => e.name === "TransactionDenied")?.inputs || []
+            inputs: deniedEventAbi?.inputs || []
           },
           args: { txHash: txHash as Hex },
           fromBlock

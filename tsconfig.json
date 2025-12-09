@@ -15,7 +15,7 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["./scripts", "./test", "./sdk/src"],
-  "exclude": ["node_modules", "dist", "cache", "artifacts"]
+  "include": ["./sdk/src", "./index.ts"],
+  "exclude": ["node_modules", "dist", "cache", "artifacts", "scripts", "test", "typechain-types"]
 }
 

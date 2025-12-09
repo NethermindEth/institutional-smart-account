@@ -88,3 +88,52 @@ export function getUserOpHash(
   return ethers.keccak256(packed);
 }
 
+/**
+ * Unpack PackedUserOperation to standard format for bundler submission
+ * Bundlers expect unpacked format (separate fields), not packed format
+ */
+export function unpackUserOpForBundler(userOp: PackedUserOperation): {
+  sender: string;
+  nonce: string;
+  initCode: string;
+  callData: string;
+  callGasLimit: string;
+  verificationGasLimit: string;
+  preVerificationGas: string;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+  paymasterAndData: string;
+  signature: string;
+} {
+  // Unpack accountGasLimits (bytes32) to verificationGasLimit and callGasLimit (uint128 each)
+  const accountGasLimitsHex = userOp.accountGasLimits.replace("0x", "");
+  const verificationGasLimitHex = accountGasLimitsHex.slice(0, 32); // First 16 bytes (32 hex chars)
+  const callGasLimitHex = accountGasLimitsHex.slice(32, 64); // Last 16 bytes (32 hex chars)
+  const verificationGasLimit = BigInt(`0x${verificationGasLimitHex}`);
+  const callGasLimit = BigInt(`0x${callGasLimitHex}`);
+  
+  // Unpack gasFees (bytes32) to maxPriorityFeePerGas and maxFeePerGas (uint128 each)
+  const gasFeesHex = userOp.gasFees.replace("0x", "");
+  const maxPriorityFeePerGasHex = gasFeesHex.slice(0, 32); // First 16 bytes (32 hex chars)
+  const maxFeePerGasHex = gasFeesHex.slice(32, 64); // Last 16 bytes (32 hex chars)
+  const maxPriorityFeePerGas = BigInt(`0x${maxPriorityFeePerGasHex}`);
+  const maxFeePerGas = BigInt(`0x${maxFeePerGasHex}`);
+  
+  // Convert to hex strings for JSON-RPC
+  const toHex = (value: bigint) => `0x${value.toString(16)}`;
+  
+  return {
+    sender: userOp.sender,
+    nonce: toHex(userOp.nonce),
+    initCode: userOp.initCode,
+    callData: userOp.callData,
+    callGasLimit: toHex(callGasLimit),
+    verificationGasLimit: toHex(verificationGasLimit),
+    preVerificationGas: toHex(userOp.preVerificationGas),
+    maxFeePerGas: toHex(maxFeePerGas),
+    maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+    paymasterAndData: userOp.paymasterAndData,
+    signature: userOp.signature
+  };
+}
+

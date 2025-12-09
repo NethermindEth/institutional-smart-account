@@ -1,0 +1,50 @@
+# Test files
+test/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+dist/test/
+dist/scripts/
+
+# Scripts
+scripts/
+hardhat.config.ts
+
+# Build artifacts
+cache/
+artifacts/
+coverage/
+coverage.json
+gas-report.txt
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Git
+.git/
+.gitignore
+
+# Hardhat
+.solcover.js
+.solhint.json
+
+# Node
+node_modules/

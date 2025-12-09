@@ -1,10 +1,32 @@
 {
-  "name": "multi-level-approval-system",
+  "name": "@1trillionsecurity/institutional-smart-account",
   "version": "1.0.0",
   "description": "ERC-4337 compatible multi-level sequential approval system for institutional blockchain accounts",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./sdk": {
+      "types": "./dist/sdk/src/index.d.ts",
+      "default": "./dist/sdk/src/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/sdk/src/contracts/abis.d.ts",
+      "default": "./dist/sdk/src/contracts/abis.js"
+    }
+  },
+  "files": [
+    "dist",
+    "contracts",
+    "typechain-types"
+  ],
   "scripts": {
     "compile": "hardhat compile",
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
     "test": "hardhat test",
     "test:unit": "hardhat test test/unit",
     "test:integration": "hardhat test test/integration",
@@ -17,6 +39,7 @@
     "size": "hardhat size-contracts",
     "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
     "deploy:sepolia": "hardhat run scripts/deploy.ts --network sepolia",
+    "deploy:factory:sepolia": "hardhat run scripts/deploy-factory-only.ts --network sepolia",
     "verify": "hardhat verify",
     "clean": "hardhat clean",
     "lint": "solhint 'contracts/**/*.sol'"
@@ -46,6 +69,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.10.0",
     "chai": "^4.5.0",
+    "dotenv": "^17.2.3",
     "hardhat": "^2.27.0",
     "hardhat-contract-sizer": "^2.10.1",
     "hardhat-coverage": "^0.9.19",

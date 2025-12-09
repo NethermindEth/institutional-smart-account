@@ -315,6 +315,25 @@ private async _estimateGas(callData: string): Promise<[bigint, bigint]> {
 
 ## Bundler Integration
 
+### Packed vs Unpacked UserOperation Format
+
+The SDK uses a **packed UserOperation format** internally for gas efficiency:
+- `accountGasLimits` (bytes32): Packs `verificationGasLimit` and `callGasLimit` as two uint128 values
+- `gasFees` (bytes32): Packs `maxPriorityFeePerGas` and `maxFeePerGas` as two uint128 values
+
+However, **bundlers expect the standard unpacked format** with separate fields:
+- `callGasLimit` (uint256)
+- `verificationGasLimit` (uint256)
+- `maxFeePerGas` (uint256)
+- `maxPriorityFeePerGas` (uint256)
+
+The `submitToBundler()` method automatically converts from packed to unpacked format before submission. This design:
+- **Reduces gas costs** for on-chain operations (packed format is more efficient)
+- **Maintains compatibility** with standard ERC-4337 bundlers (unpacked format)
+- **Hides complexity** from SDK users (conversion happens automatically)
+
+### Bundler Submission Methods
+
 The SDK supports both:
 1. **Direct EntryPoint Submission**: For testing
 2. **Bundler Submission**: For production (via `eth_sendUserOperation`)
@@ -412,4 +431,5 @@ Potential improvements:
 4. **Multi-Chain Support**: Support for multiple networks
 5. **Caching**: Cache contract state for performance
 6. **Retry Logic**: Automatic retry for failed operations
+
 

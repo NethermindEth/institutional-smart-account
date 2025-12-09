@@ -127,6 +127,7 @@ export class UserOpBuilder {
 
   /**
    * Submit UserOperation to bundler
+   * Converts packed format to unpacked format expected by bundler
    */
   async submitToBundler(userOp: PackedUserOperation, bundlerUrl?: string): Promise<Hex> {
     const url = bundlerUrl || this.bundlerUrl;
@@ -134,7 +135,16 @@ export class UserOpBuilder {
       throw new Error("Bundler URL required");
     }
 
-    // Submit to bundler via JSON-RPC
+    // Unpack accountGasLimits (bytes32) to verificationGasLimit and callGasLimit (uint128 each)
+    const { verificationGasLimit, callGasLimit } = this._unpackAccountGasLimits(userOp.accountGasLimits as Hex);
+    
+    // Unpack gasFees (bytes32) to maxPriorityFeePerGas and maxFeePerGas (uint128 each)
+    const { maxPriorityFeePerGas, maxFeePerGas } = this._unpackGasFees(userOp.gasFees as Hex);
+
+    // Convert to hex strings for JSON-RPC
+    const toHex = (value: bigint) => `0x${value.toString(16)}`;
+
+    // Submit to bundler via JSON-RPC with unpacked format
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -145,12 +155,14 @@ export class UserOpBuilder {
         params: [
           {
             sender: userOp.sender,
-            nonce: `0x${userOp.nonce.toString(16)}`,
+            nonce: toHex(userOp.nonce),
             initCode: userOp.initCode,
             callData: userOp.callData,
-            accountGasLimits: userOp.accountGasLimits,
-            preVerificationGas: `0x${userOp.preVerificationGas.toString(16)}`,
-            gasFees: userOp.gasFees,
+            callGasLimit: toHex(callGasLimit),
+            verificationGasLimit: toHex(verificationGasLimit),
+            preVerificationGas: toHex(userOp.preVerificationGas),
+            maxFeePerGas: toHex(maxFeePerGas),
+            maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
             paymasterAndData: userOp.paymasterAndData,
             signature: userOp.signature
           },
@@ -253,5 +265,35 @@ export class UserOpBuilder {
       ["uint128", "uint128"],
       [maxPriorityFeePerGas, maxFeePerGas]
     ) as Hex;
+  }
+
+  /**
+   * Unpack bytes32 to two uint128 values (accountGasLimits)
+   */
+  private _unpackAccountGasLimits(packed: Hex): { verificationGasLimit: bigint; callGasLimit: bigint } {
+    // Packed format: first 16 bytes = verificationGasLimit, last 16 bytes = callGasLimit
+    const hex = packed.replace("0x", "");
+    const verificationGasLimitHex = hex.slice(0, 32); // First 16 bytes (32 hex chars)
+    const callGasLimitHex = hex.slice(32, 64); // Last 16 bytes (32 hex chars)
+    
+    return {
+      verificationGasLimit: BigInt(`0x${verificationGasLimitHex}` as `0x${string}`),
+      callGasLimit: BigInt(`0x${callGasLimitHex}` as `0x${string}`)
+    };
+  }
+
+  /**
+   * Unpack bytes32 to two uint128 values (gasFees)
+   */
+  private _unpackGasFees(packed: Hex): { maxPriorityFeePerGas: bigint; maxFeePerGas: bigint } {
+    // Packed format: first 16 bytes = maxPriorityFeePerGas, last 16 bytes = maxFeePerGas
+    const hex = packed.replace("0x", "");
+    const maxPriorityFeePerGasHex = hex.slice(0, 32); // First 16 bytes (32 hex chars)
+    const maxFeePerGasHex = hex.slice(32, 64); // Last 16 bytes (32 hex chars)
+    
+    return {
+      maxPriorityFeePerGas: BigInt(`0x${maxPriorityFeePerGasHex}` as `0x${string}`),
+      maxFeePerGas: BigInt(`0x${maxFeePerGasHex}` as `0x${string}`)
+    };
   }
 }

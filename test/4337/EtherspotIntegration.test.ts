@@ -3,7 +3,7 @@ import { ethers } from "hardhat";
 import { MultiLevelAccount } from "../../typechain-types";
 import { IEntryPoint } from "../../typechain-types/@account-abstraction/contracts/interfaces";
 import { deployFixture, DeployFixture } from "../helpers/fixtures";
-import { createUserOp, signUserOp, getUserOpHash } from "../helpers/userOp";
+import { createUserOp, signUserOp, getUserOpHash, unpackUserOpForBundler } from "../helpers/userOp";
 import { setupTestEnvironment, teardownTestEnvironment } from "../helpers/test-setup";
 
 /**
@@ -150,6 +150,9 @@ describe("Etherspot Integration", () => {
     const signature = await signUserOp(userOp, owner, entryPointAddress, chainId);
     userOp.signature = signature;
 
+    // Unpack UserOperation for bundler (bundlers expect unpacked format)
+    const unpackedUserOp = unpackUserOpForBundler(userOp);
+    
     // Submit to bundler
     const response = await fetch(bundlerUrl, {
       method: "POST",
@@ -159,17 +162,7 @@ describe("Etherspot Integration", () => {
         id: 1,
         method: "eth_sendUserOperation",
         params: [
-          {
-            sender: userOp.sender,
-            nonce: `0x${userOp.nonce.toString(16)}`,
-            initCode: userOp.initCode,
-            callData: userOp.callData,
-            accountGasLimits: userOp.accountGasLimits,
-            preVerificationGas: `0x${userOp.preVerificationGas.toString(16)}`,
-            gasFees: userOp.gasFees,
-            paymasterAndData: userOp.paymasterAndData,
-            signature: userOp.signature
-          },
+          unpackedUserOp,
           entryPointAddress
         ]
       })
