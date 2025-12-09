@@ -144,6 +144,30 @@ export class UserOpBuilder {
     // Convert to hex strings for JSON-RPC
     const toHex = (value: bigint) => `0x${value.toString(16)}`;
 
+    // Build userOp object for bundler - omit empty optional fields
+    // Some bundlers (like Pimlico) don't accept initCode and paymasterAndData if they're empty
+    const bundlerUserOp: Record<string, string> = {
+      sender: userOp.sender,
+      nonce: toHex(userOp.nonce),
+      callData: userOp.callData,
+      callGasLimit: toHex(callGasLimit),
+      verificationGasLimit: toHex(verificationGasLimit),
+      preVerificationGas: toHex(userOp.preVerificationGas),
+      maxFeePerGas: toHex(maxFeePerGas),
+      maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+      signature: userOp.signature
+    };
+
+    // Only include initCode if it's not empty
+    if (userOp.initCode && userOp.initCode !== "0x" && userOp.initCode.length > 2) {
+      bundlerUserOp.initCode = userOp.initCode;
+    }
+
+    // Only include paymasterAndData if it's not empty
+    if (userOp.paymasterAndData && userOp.paymasterAndData !== "0x" && userOp.paymasterAndData.length > 2) {
+      bundlerUserOp.paymasterAndData = userOp.paymasterAndData;
+    }
+
     // Submit to bundler via JSON-RPC with unpacked format
     const response = await fetch(url, {
       method: "POST",
@@ -153,19 +177,7 @@ export class UserOpBuilder {
         id: 1,
         method: "eth_sendUserOperation",
         params: [
-          {
-            sender: userOp.sender,
-            nonce: toHex(userOp.nonce),
-            initCode: userOp.initCode,
-            callData: userOp.callData,
-            callGasLimit: toHex(callGasLimit),
-            verificationGasLimit: toHex(verificationGasLimit),
-            preVerificationGas: toHex(userOp.preVerificationGas),
-            maxFeePerGas: toHex(maxFeePerGas),
-            maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
-            paymasterAndData: userOp.paymasterAndData,
-            signature: userOp.signature
-          },
+          bundlerUserOp,
           this.entryPointAddress
         ]
       })
