@@ -39,8 +39,38 @@ implementation/
 ## Installation
 
 ```bash
+cd implementation
 npm install
 ```
+
+## Contributor Quickstart
+
+1) Create a local env file (don’t commit secrets):
+
+```bash
+cd implementation
+cp env.example .env
+```
+
+2) Compile:
+
+```bash
+npm run compile
+```
+
+3) Run tests:
+
+```bash
+# Most tests
+npm test
+
+# Skip bundler-related setup/tests (fastest)
+SKIP_BUNDLER=1 npm test
+```
+
+Bundler test setup details:
+- `test/README_BUNDLER.md`
+- `test/helpers/BUNDLER_SETUP.md`
 
 ## Usage
 
@@ -86,19 +116,25 @@ Reports are generated in the `coverage/` directory. Open `coverage/index.html` i
 ### Deploy Contracts
 
 ```bash
-# Deploy to local network
+# Start a local chain (separate terminal)
+npx hardhat node
+
+# Deploy to local network (separate terminal)
 npm run deploy:local
 
 # Deploy to Sepolia testnet
 npm run deploy:sepolia
 ```
 
+For script-by-script usage and required env vars, see `scripts/README.md`.
+
 ## Development
 
 This project uses:
 - **Hardhat** for development environment
 - **TypeScript** for type safety
-- **Ethers.js v6** for blockchain interaction
+- **Ethers.js v6** (via Hardhat) for deployment scripts/tests
+- **viem** + **permissionless** in the SDK
 - **OpenZeppelin Contracts v5** for security
 - **@account-abstraction/contracts** for ERC-4337 support
 
@@ -124,6 +160,8 @@ npm run coverage
 
 ## Deployment
 
+See [Deployment Guide](./DEPLOYMENT.md) for detailed instructions on deploying to local, testnet, and mainnet networks.
+
 ```bash
 # Deploy to local network
 npm run deploy:local
@@ -131,6 +169,10 @@ npm run deploy:local
 # Deploy to Sepolia testnet
 npm run deploy:sepolia
 ```
+
+## Support & Troubleshooting
+
+See [Troubleshooting Guide](./TROUBLESHOOTING.md) for solutions to common issues.
 
 ## Documentation
 
@@ -145,6 +187,9 @@ npm run deploy:sepolia
 - [SDK API Documentation](./sdk/docs/API.md) - SDK API reference
 - [SDK Integration Guide](./sdk/docs/INTEGRATION.md) - Complete integration guide
 - [SDK Examples](./sdk/docs/EXAMPLES.md) - Usage examples
+
+### Scripts
+- [Scripts README](./scripts/README.md) - Deploy/config/verify scripts and env vars
 
 ### Testing
 - [Testing Overview](./test/README.md) - Test suite structure and overview
