@@ -383,6 +383,10 @@ export class EventMonitor {
           name: "TransactionProposed",
           inputs: eventAbi.inputs || []
         },
+        // Important: without a fromBlock, some clients default to a narrow range and
+        // we can miss historical TransactionProposed logs (especially after the
+        // transaction is denied/executed and removed from storage).
+        fromBlock: 0n,
         args: { txHash: txHash as Hex }
       });
       
