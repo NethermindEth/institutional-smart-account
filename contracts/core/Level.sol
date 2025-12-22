@@ -117,11 +117,14 @@ contract Level {
         // Initialize signers
         for (uint256 i = 0; i < _signers.length; i++) {
             if (_signers[i] == address(0)) revert InvalidSigner();
-            if (isSigner[_signers[i]]) revert InvalidSigner(); // No duplicates
+            // Allow duplicates for demo purposes (same address can be used multiple times)
+            // Note: Duplicates are still added to the signers array for quorum counting
+            if (!isSigner[_signers[i]]) {
+                isSigner[_signers[i]] = true;
+                emit SignerAdded(_signers[i]);
+            }
             
             signers.push(_signers[i]);
-            isSigner[_signers[i]] = true;
-            emit SignerAdded(_signers[i]);
         }
     }
     

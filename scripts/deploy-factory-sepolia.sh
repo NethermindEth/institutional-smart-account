@@ -20,3 +20,5 @@ fi
 
 echo "Deploying Factory to Sepolia..."
 npx hardhat run scripts/deploy-factory-only.ts --network sepolia
+
+

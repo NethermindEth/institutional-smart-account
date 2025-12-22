@@ -181,11 +181,25 @@ export class EventMonitor {
           args: [txHash as Hex]
         }) as any;
         
-        if (!result || result.to === zeroAddress) {
+        // Check if transaction exists - if to is zero address and value is 0, it's likely not stored
+        // But we also check if proposedAt is 0 to be more certain
+        if (!result || 
+            (result.to === zeroAddress && 
+             (result.value === 0n || result.value === "0" || Number(result.value) === 0) &&
+             (result.proposedAt === 0n || result.proposedAt === "0" || Number(result.proposedAt) === 0))) {
           if (attempt < maxRetries - 1) {
             continue;
           }
-          txData = null;
+          // Transaction not found - try to get it from events as fallback
+          txData = await this._getTransactionFromEvents(txHash);
+          if (!txData) {
+            throw new Error(
+              `Transaction not found in contract. ` +
+              `This might be a bundle transaction hash. ` +
+              `Please use the internal transaction hash from the TransactionProposed event. ` +
+              `Hash: ${txHash}`
+            );
+          }
           break;
         }
         
@@ -213,6 +227,17 @@ export class EventMonitor {
              message.includes("Transaction not found"))) {
           continue;
         }
+        // If we haven't tried getting from events yet, try that
+        if (!txData && !message.includes("Transaction not found in contract")) {
+          try {
+            txData = await this._getTransactionFromEvents(txHash);
+            if (txData) {
+              break; // Found it in events, continue with processing
+            }
+          } catch {
+            // Ignore event lookup errors, throw original error
+          }
+        }
         throw error;
       }
     }
@@ -237,10 +262,12 @@ export class EventMonitor {
       ? txData.config.levelIds
       : await this._getAllLevelIds();
     
-    // Get level statuses
+    // Get level statuses - pass config quorums so we can show correct requirements
+    // even for levels that haven't been submitted yet
     const levelStatuses = await this._getLevelStatuses(
       txHash,
-      levelIds
+      levelIds,
+      txData?.config?.quorums
     );
     
     return {
@@ -257,11 +284,13 @@ export class EventMonitor {
   
   private async _getLevelStatuses(
     txHash: string,
-    levelIds: readonly bigint[]
+    levelIds: readonly bigint[],
+    configQuorums?: readonly bigint[]
   ): Promise<LevelStatus[]> {
     const statuses: LevelStatus[] = [];
     
-    for (const levelId of levelIds) {
+    for (let i = 0; i < levelIds.length; i++) {
+      const levelId = levelIds[i];
       const levelAddress = await this.publicClient.readContract({
         address: this.accountAddress,
         abi: MULTI_LEVEL_ACCOUNT_ABI,
@@ -297,7 +326,13 @@ export class EventMonitor {
       const approved = state?.approved ?? state?.[5] ?? false;
       const denied = state?.denied ?? state?.[6] ?? false;
       const signatureCount = progress?.current ?? progress?.[0] ?? 0n;
-      const requiredSignatures = progress?.required ?? progress?.[1] ?? 0n;
+      
+      // Use quorum from config if available and level hasn't been submitted yet
+      // This ensures we show the correct requirement even for future levels
+      let requiredSignatures = progress?.required ?? progress?.[1] ?? 0n;
+      if (requiredSignatures === 0n && configQuorums && i < configQuorums.length) {
+        requiredSignatures = configQuorums[i];
+      }
       
       statuses.push({
         levelId: Number(levelId),
@@ -325,5 +360,67 @@ export class EventMonitor {
       ids.push(i);
     }
     return ids;
+  }
+  
+  /**
+   * Try to get transaction data from TransactionProposed events
+   * This is a fallback when the transaction might have been deleted or not stored
+   */
+  private async _getTransactionFromEvents(txHash: string): Promise<any | null> {
+    try {
+      const eventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) => 
+        e.type === "event" && (e as any).name === "TransactionProposed"
+      ) as any;
+      
+      if (!eventAbi) {
+        return null;
+      }
+      
+      const logs = await this.publicClient.getLogs({
+        address: this.accountAddress,
+        event: {
+          type: "event",
+          name: "TransactionProposed",
+          inputs: eventAbi.inputs || []
+        },
+        args: { txHash: txHash as Hex }
+      });
+      
+      if (logs.length === 0) {
+        return null;
+      }
+      
+      // Get the most recent event
+      const log = logs[logs.length - 1];
+      const decoded = decodeEventLog({
+        abi: MULTI_LEVEL_ACCOUNT_ABI,
+        eventName: "TransactionProposed",
+        data: log.data,
+        topics: log.topics
+      });
+      
+      const args = decoded.args as any;
+      
+      // We can get to, value, amount, levelIds, and quorums from the event
+      // But we don't have data, proposedAt, or full config
+      // So we'll construct a minimal txData object
+      return {
+        to: args.to as string,
+        value: BigInt(args.value ?? 0),
+        data: "0x" as Hex, // Not available in event
+        amount: BigInt(args.amount ?? 0),
+        proposedAt: BigInt(log.blockNumber ?? 0), // Use block number as approximation
+        config: {
+          minAmount: 0n,
+          maxAmount: 0n,
+          levelIds: (args.levelIds ?? []).map((id: bigint) => BigInt(id)),
+          quorums: (args.quorums ?? []).map((q: bigint) => BigInt(q)),
+          timelocks: [] // Not available in event
+        }
+      };
+    } catch (error) {
+      console.error("Error getting transaction from events:", error);
+      return null;
+    }
   }
 }

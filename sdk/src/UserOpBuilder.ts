@@ -17,7 +17,18 @@ export class UserOpBuilder {
   private publicClient: PublicClient;
   private walletClient?: WalletClient;
   private plugin: MultiLevelAccountPlugin;
-  private bundlerUrl?: string;
+  private _bundlerUrl?: string;
+  
+  /**
+   * Set bundler URL (can be updated dynamically)
+   */
+  setBundlerUrl(bundlerUrl: string | undefined): void {
+    this._bundlerUrl = bundlerUrl;
+  }
+  
+  get bundlerUrl(): string | undefined {
+    return this._bundlerUrl;
+  }
 
   constructor(
     accountAddress: Address,
@@ -30,13 +41,116 @@ export class UserOpBuilder {
     this.entryPointAddress = entryPointAddress;
     this.publicClient = publicClient;
     this.walletClient = walletClient;
-    this.bundlerUrl = bundlerUrl;
+    this._bundlerUrl = bundlerUrl;
     
     this.plugin = new MultiLevelAccountPlugin(
       accountAddress,
       entryPointAddress,
       publicClient
     );
+  }
+
+  /**
+   * Get gas prices from bundler (if available) or fall back to standard estimation
+   */
+  private async getGasPrices(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+    // Try to get gas prices from bundler first (for Pimlico and similar)
+    if (this._bundlerUrl) {
+      try {
+        const bundlerGasPrices = await this.getBundlerGasPrices();
+        if (bundlerGasPrices) {
+          return bundlerGasPrices;
+        }
+      } catch (error) {
+        console.warn("Failed to get gas prices from bundler, falling back to standard estimation:", error);
+      }
+    }
+    
+    // Fall back to standard fee estimation
+    try {
+      const feeData = await this.publicClient.estimateFeesPerGas();
+      const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || 1000000000n; // 1 gwei default
+      const maxFeePerGas = feeData.maxFeePerGas || 2000000000n; // 2 gwei default
+      
+      // Add a small buffer to ensure we meet minimum requirements
+      return {
+        maxPriorityFeePerGas,
+        maxFeePerGas: maxFeePerGas + (maxFeePerGas / 10n) // Add 10% buffer
+      };
+    } catch (error: any) {
+      // Fallback for chains that don't support EIP-1559 (like hardhat)
+      if (error?.name === "Eip1559FeesNotSupportedError" || error?.message?.includes("EIP-1559")) {
+        // Use gas price for legacy chains
+        const gasPrice = await this.publicClient.getGasPrice();
+        return {
+          maxFeePerGas: gasPrice,
+          maxPriorityFeePerGas: 0n
+        };
+      } else {
+        // Use defaults if estimation fails
+        return {
+          maxPriorityFeePerGas: 1000000000n, // 1 gwei default
+          maxFeePerGas: 2000000000n // 2 gwei default
+        };
+      }
+    }
+  }
+  
+  /**
+   * Get gas prices from bundler using pimlico_getUserOperationGasPrice or similar
+   */
+  private async getBundlerGasPrices(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | null> {
+    if (!this._bundlerUrl) return null;
+    
+    try {
+      // Try Pimlico's gas price endpoint first
+      const response = await fetch(this._bundlerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "pimlico_getUserOperationGasPrice",
+          params: []
+        })
+      });
+      
+      const result = (await response.json()) as {
+        error?: { message: string; code: number };
+        result?: {
+          slow?: { maxFeePerGas: string; maxPriorityFeePerGas: string };
+          standard?: { maxFeePerGas: string; maxPriorityFeePerGas: string };
+          fast?: { maxFeePerGas: string; maxPriorityFeePerGas: string };
+        };
+      };
+      
+      if (result.error) {
+        // Try alternative method: eth_estimateUserOperationGas with dummy UserOp
+        return null;
+      }
+      
+      if (result.result) {
+        const { slow, standard, fast } = result.result;
+        // Use standard pricing (or fast if standard not available)
+        const pricing = standard || fast || slow;
+        
+        if (pricing && pricing.maxFeePerGas && pricing.maxPriorityFeePerGas) {
+          const maxFeePerGas = BigInt(pricing.maxFeePerGas);
+          const maxPriorityFeePerGas = BigInt(pricing.maxPriorityFeePerGas);
+          
+          // Add a small buffer (5%) to ensure we meet minimum requirements
+          return {
+            maxFeePerGas: maxFeePerGas + (maxFeePerGas / 20n), // Add 5% buffer
+            maxPriorityFeePerGas: maxPriorityFeePerGas + (maxPriorityFeePerGas / 20n) // Add 5% buffer
+          };
+        }
+      }
+    } catch (error) {
+      // If bundler doesn't support this method, return null to fall back
+      return null;
+    }
+    
+    return null;
   }
 
   /**
@@ -49,32 +163,16 @@ export class UserOpBuilder {
     // Encode execute call
     const callData = this.plugin.encodeExecute(params);
     
-    // Get fee data - handle chains that don't support EIP-1559
-    let maxFeePerGas: bigint;
-    let maxPriorityFeePerGas: bigint;
-    
-    try {
-      const feeData = await this.publicClient.estimateFeesPerGas();
-      maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || 1000000000n; // 1 gwei default
-      maxFeePerGas = feeData.maxFeePerGas || 2000000000n; // 2 gwei default
-    } catch (error: any) {
-      // Fallback for chains that don't support EIP-1559 (like hardhat)
-      if (error?.name === "Eip1559FeesNotSupportedError" || error?.message?.includes("EIP-1559")) {
-        // Use gas price for legacy chains
-        const gasPrice = await this.publicClient.getGasPrice();
-        maxFeePerGas = gasPrice;
-        maxPriorityFeePerGas = 0n;
-      } else {
-        // Use defaults if estimation fails
-        maxPriorityFeePerGas = 1000000000n; // 1 gwei default
-        maxFeePerGas = 2000000000n; // 2 gwei default
-      }
-    }
+    // Get fee data - try bundler first, then fall back to standard estimation
+    const { maxFeePerGas, maxPriorityFeePerGas } = await this.getGasPrices();
     
     // Pack gas limits (verificationGasLimit, callGasLimit)
     // Packed as two uint128 values in bytes32
-    const verificationGasLimit = 200000n; // Default estimate
-    const callGasLimit = 200000n; // Default estimate
+    // Use higher limits to avoid validation failures
+    // verificationGasLimit needs to cover validateUserOp + prefund + signature validation
+    // callGasLimit needs to cover execute function
+    const verificationGasLimit = 1000000n; // Increased significantly for validateUserOp + prefund
+    const callGasLimit = 500000n; // Increased for execute function
     const accountGasLimits = this._packAccountGasLimits(verificationGasLimit, callGasLimit);
     
     // Pack gas fees (maxPriorityFeePerGas, maxFeePerGas)
@@ -87,7 +185,7 @@ export class UserOpBuilder {
       initCode: "0x" as Hex,
       callData: callData as Hex,
       accountGasLimits: accountGasLimits as Hex,
-      preVerificationGas: 50000n,
+      preVerificationGas: 200000n, // Increased for EntryPoint overhead
       gasFees: gasFees as Hex,
       paymasterAndData: "0x" as Hex,
       signature: "0x" as Hex
@@ -130,7 +228,7 @@ export class UserOpBuilder {
    * Converts packed format to unpacked format expected by bundler
    */
   async submitToBundler(userOp: PackedUserOperation, bundlerUrl?: string): Promise<Hex> {
-    const url = bundlerUrl || this.bundlerUrl;
+    const url = bundlerUrl || this._bundlerUrl;
     if (!url) {
       throw new Error("Bundler URL required");
     }
@@ -192,7 +290,110 @@ export class UserOpBuilder {
       throw new Error("No result from bundler");
     }
 
+    // Return the UserOperation hash (not transaction hash yet)
     return result.result;
+  }
+
+  /**
+   * Get UserOperation receipt from bundler
+   * This returns the actual transaction hash once the UserOperation is included
+   */
+  async getUserOperationReceipt(
+    userOpHash: Hex,
+    bundlerUrl?: string
+  ): Promise<{ receipt: any; actualTxHash: Hex | null } | null> {
+    const url = bundlerUrl || this._bundlerUrl;
+    if (!url) {
+      throw new Error("Bundler URL required");
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_getUserOperationReceipt",
+        params: [userOpHash]
+      })
+    });
+
+    const result = await response.json() as { 
+      error?: { message: string }; 
+      result?: {
+        userOpHash: Hex;
+        entryPoint: Address;
+        sender: Address;
+        nonce: bigint;
+        paymaster: Address | null;
+        actualGasCost: bigint;
+        actualGasUsed: bigint;
+        success: boolean;
+        logs: any[];
+        receipt: {
+          transactionHash: Hex;
+          transactionIndex: bigint;
+          blockHash: Hex;
+          blockNumber: bigint;
+          from: Address;
+          to: Address | null;
+          cumulativeGasUsed: bigint;
+          gasUsed: bigint;
+          contractAddress: Address | null;
+          logs: any[];
+          status: "success" | "reverted";
+          logsBloom: Hex;
+        };
+      } | null;
+    };
+
+    if (result.error) {
+      // Receipt not found yet - UserOperation might still be pending
+      if (result.error.message?.includes("not found") || result.error.message?.includes("pending")) {
+        return null;
+      }
+      throw new Error(`Bundler error: ${result.error.message}`);
+    }
+
+    if (!result.result) {
+      return null; // Receipt not available yet
+    }
+
+    return {
+      receipt: result.result,
+      actualTxHash: result.result.receipt.transactionHash
+    };
+  }
+
+  /**
+   * Wait for UserOperation to be included and return transaction hash
+   * Polls the bundler until the UserOperation receipt is available
+   */
+  async waitForUserOperationReceipt(
+    userOpHash: Hex,
+    bundlerUrl?: string,
+    timeout: number = 120_000,
+    pollingInterval: number = 2_000
+  ): Promise<Hex> {
+    const url = bundlerUrl || this._bundlerUrl;
+    if (!url) {
+      throw new Error("Bundler URL required");
+    }
+
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      const receipt = await this.getUserOperationReceipt(userOpHash, url);
+      
+      if (receipt && receipt.actualTxHash) {
+        return receipt.actualTxHash;
+      }
+
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, pollingInterval));
+    }
+
+    throw new Error(`Timeout waiting for UserOperation receipt. UserOpHash: ${userOpHash}`);
   }
 
   /**

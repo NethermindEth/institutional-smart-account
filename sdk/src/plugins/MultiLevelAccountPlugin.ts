@@ -1,6 +1,6 @@
 import { encodeFunctionData, type Address, type Hex } from "viem";
 import type { PublicClient } from "viem";
-import { MULTI_LEVEL_ACCOUNT_ABI } from "../contracts/abis";
+import { MULTI_LEVEL_ACCOUNT_ABI, ENTRY_POINT_ABI } from "../contracts/abis";
 
 /**
  * Parameters for executing a transaction on MultiLevelAccount
@@ -45,13 +45,17 @@ export class MultiLevelAccountPlugin {
   }
 
   /**
-   * Get the current nonce for the account
+   * Get the current nonce for the account from EntryPoint
+   * ERC-4337 requires using EntryPoint's nonce manager, not the account's internal nonce
+   * @param key Nonce key (default 0 for standard accounts)
    */
-  async getNonce(): Promise<bigint> {
+  async getNonce(key: bigint = 0n): Promise<bigint> {
+    // EntryPoint.getNonce(address sender, uint192 key) returns uint256
     const nonce = await this.publicClient.readContract({
-      address: this.accountAddress,
-      abi: MULTI_LEVEL_ACCOUNT_ABI,
-      functionName: "nonce"
+      address: this.entryPointAddress,
+      abi: ENTRY_POINT_ABI,
+      functionName: "getNonce",
+      args: [this.accountAddress, key]
     });
     return nonce as bigint;
   }

@@ -1,5 +1,5 @@
 import type { Address, Hex, PublicClient, WalletClient } from "viem";
-import { decodeEventLog } from "viem";
+import { decodeEventLog, encodeFunctionData } from "viem";
 import { PendingTransaction, ApprovalState } from "./types";
 import { LEVEL_ABI, MULTI_LEVEL_ACCOUNT_ABI } from "./contracts/abis";
 
@@ -161,12 +161,35 @@ export class SignerInterface {
       throw new Error("No account found in wallet client");
     }
     
+    // Estimate gas and cap at block gas limit
+    let gasLimit: bigint | undefined;
+    try {
+      const estimatedGas = await this.publicClient.estimateGas({
+        account,
+        to: this.levelAddress,
+        data: encodeFunctionData({
+          abi: LEVEL_ABI,
+          functionName: "sign",
+          args: [txHash as Hex]
+        })
+      });
+      
+      // Cap at block gas limit (16,777,216 for Sepolia, but use a safe margin)
+      const BLOCK_GAS_LIMIT = 16000000n; // Leave some margin
+      gasLimit = estimatedGas > BLOCK_GAS_LIMIT ? BLOCK_GAS_LIMIT : estimatedGas;
+    } catch (error) {
+      // If estimation fails, use a reasonable default
+      console.warn("Gas estimation failed, using default:", error);
+      gasLimit = 500000n; // Default gas limit for simple operations
+    }
+    
     const hash = await this.walletClient.writeContract({
       address: this.levelAddress,
       abi: LEVEL_ABI,
       functionName: "sign",
       args: [txHash as Hex],
       account,
+      gas: gasLimit,
       chain: undefined
     });
     
@@ -186,12 +209,35 @@ export class SignerInterface {
       throw new Error("No account found in wallet client");
     }
     
+    // Estimate gas and cap at block gas limit
+    let gasLimit: bigint | undefined;
+    try {
+      const estimatedGas = await this.publicClient.estimateGas({
+        account,
+        to: this.levelAddress,
+        data: encodeFunctionData({
+          abi: LEVEL_ABI,
+          functionName: "deny",
+          args: [txHash as Hex]
+        })
+      });
+      
+      // Cap at block gas limit (16,777,216 for Sepolia, but use a safe margin)
+      const BLOCK_GAS_LIMIT = 16000000n; // Leave some margin
+      gasLimit = estimatedGas > BLOCK_GAS_LIMIT ? BLOCK_GAS_LIMIT : estimatedGas;
+    } catch (error) {
+      // If estimation fails, use a reasonable default
+      console.warn("Gas estimation failed, using default:", error);
+      gasLimit = 500000n; // Default gas limit for simple operations
+    }
+    
     const hash = await this.walletClient.writeContract({
       address: this.levelAddress,
       abi: LEVEL_ABI,
       functionName: "deny",
       args: [txHash as Hex],
       account,
+      gas: gasLimit,
       chain: undefined
     });
     
@@ -209,12 +255,35 @@ export class SignerInterface {
     if (this.walletClient) {
       const [account] = await this.walletClient.getAddresses();
       if (account) {
+        // Estimate gas and cap at block gas limit
+        let gasLimit: bigint | undefined;
+        try {
+          const estimatedGas = await this.publicClient.estimateGas({
+            account,
+            to: this.levelAddress,
+            data: encodeFunctionData({
+              abi: LEVEL_ABI,
+              functionName: "completeTimelock",
+              args: [txHash as Hex]
+            })
+          });
+          
+          // Cap at block gas limit (16,777,216 for Sepolia, but use a safe margin)
+          const BLOCK_GAS_LIMIT = 16000000n; // Leave some margin
+          gasLimit = estimatedGas > BLOCK_GAS_LIMIT ? BLOCK_GAS_LIMIT : estimatedGas;
+        } catch (error) {
+          // If estimation fails, use a reasonable default
+          console.warn("Gas estimation failed, using default:", error);
+          gasLimit = 500000n; // Default gas limit for simple operations
+        }
+        
         const hash = await this.walletClient.writeContract({
           address: this.levelAddress,
           abi: LEVEL_ABI,
           functionName: "completeTimelock",
           args: [txHash as Hex],
           account,
+          gas: gasLimit,
           chain: undefined
         });
         return hash;
