@@ -112,12 +112,25 @@ const txHash = await sdk.proposeTransaction(
 // For ERC-20 transfer
 const tokenAddress = "0x...";
 const recipient = "0x...";
-const amount = ethers.parseUnits("100", 18);
+import { encodeFunctionData, parseUnits } from "viem";
 
-const tokenInterface = new ethers.Interface([
-  "function transfer(address to, uint256 amount) returns (bool)"
-]);
-const callData = tokenInterface.encodeFunctionData("transfer", [recipient, amount]);
+const amount = parseUnits("100", 18);
+const callData = encodeFunctionData({
+  abi: [
+    {
+      type: "function",
+      name: "transfer",
+      stateMutability: "nonpayable",
+      inputs: [
+        { name: "to", type: "address" },
+        { name: "amount", type: "uint256" }
+      ],
+      outputs: [{ name: "", type: "bool" }]
+    }
+  ],
+  functionName: "transfer",
+  args: [recipient, amount],
+});
 
 const txHash = await sdk.proposeTransaction(
   tokenAddress,
@@ -146,13 +159,15 @@ await level1Interface.initialize();
 ### Get Pending Transactions
 
 ```typescript
+import { formatEther } from "viem";
+
 const pending = await level1Interface.getPendingTransactions();
 
 for (const tx of pending) {
   console.log(`Transaction ${tx.txHash}:`);
   console.log(`  To: ${tx.to}`);
-  console.log(`  Value: ${ethers.formatEther(tx.value)} ETH`);
-  console.log(`  Amount: ${ethers.formatEther(tx.amount)}`);
+  console.log(`  Value: ${formatEther(tx.value)} ETH`);
+  console.log(`  Amount: ${formatEther(tx.amount)}`);
   console.log(`  Signatures: ${tx.signaturesCollected}/${tx.signaturesRequired}`);
   console.log(`  Timelock: ${tx.timelockRemaining} seconds`);
 }
@@ -270,8 +285,8 @@ if (status.fullyApproved) {
 ### With Confirmation
 
 ```typescript
-const tx = await sdk.executeApprovedTransaction(txHash);
-const receipt = await tx.wait();
+const execTxHash = await sdk.executeApprovedTransaction(txHash);
+const receipt = await publicClient.waitForTransactionReceipt({ hash: execTxHash as `0x${string}` });
 
 if (receipt.status === 1) {
   console.log("Transaction executed successfully");
@@ -285,18 +300,35 @@ if (receipt.status === 1) {
 ### Pattern 1: Owner Proposes, Signers Approve
 
 ```typescript
-// Owner proposes
-const ownerSDK = new MultiLevelAccountSDK(accountAddress, entryPointAddress, owner);
+import { createPublicClient, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+
+const publicClient = createPublicClient({ transport: http(rpcUrl) });
+
+// Owner proposes (owner wallet client)
+const ownerWalletClient = createWalletClient({
+  account: privateKeyToAccount(process.env.OWNER_PRIVATE_KEY as `0x${string}`),
+  transport: http(rpcUrl),
+});
+const ownerSDK = new MultiLevelAccountSDK(accountAddress, entryPointAddress, publicClient, ownerWalletClient);
 const txHash = await ownerSDK.proposeTransaction(to, value, data, amount);
 
-// Signer 1 approves
-const signer1SDK = new MultiLevelAccountSDK(accountAddress, entryPointAddress, signer1);
+// Signer 1 approves (signer wallet client)
+const signer1WalletClient = createWalletClient({
+  account: privateKeyToAccount(process.env.SIGNER1_PRIVATE_KEY as `0x${string}`),
+  transport: http(rpcUrl),
+});
+const signer1SDK = new MultiLevelAccountSDK(accountAddress, entryPointAddress, publicClient, signer1WalletClient);
 const level1Interface = signer1SDK.getSignerInterface(1);
 await level1Interface.initialize();
 await level1Interface.sign(txHash);
 
 // Signer 2 approves
-const signer2SDK = new MultiLevelAccountSDK(accountAddress, entryPointAddress, signer2);
+const signer2WalletClient = createWalletClient({
+  account: privateKeyToAccount(process.env.SIGNER2_PRIVATE_KEY as `0x${string}`),
+  transport: http(rpcUrl),
+});
+const signer2SDK = new MultiLevelAccountSDK(accountAddress, entryPointAddress, publicClient, signer2WalletClient);
 const level2Interface = signer2SDK.getSignerInterface(2);
 await level2Interface.initialize();
 await level2Interface.sign(txHash);
@@ -309,8 +341,8 @@ class SigningService {
   private sdk: MultiLevelAccountSDK;
   private interfaces: Map<number, SignerInterface> = new Map();
   
-  constructor(accountAddress: string, entryPointAddress: string, signer: Signer) {
-    this.sdk = new MultiLevelAccountSDK(accountAddress, entryPointAddress, signer);
+  constructor(accountAddress: string, entryPointAddress: string, publicClient: PublicClient, walletClient: WalletClient) {
+    this.sdk = new MultiLevelAccountSDK(accountAddress, entryPointAddress, publicClient, walletClient);
   }
   
   async initializeLevel(levelId: number) {
@@ -344,8 +376,8 @@ class TransactionDashboard {
   private sdk: MultiLevelAccountSDK;
   private subscriptions: Map<string, () => void> = new Map();
   
-  constructor(accountAddress: string, entryPointAddress: string, provider: Provider) {
-    this.sdk = new MultiLevelAccountSDK(accountAddress, entryPointAddress, provider);
+  constructor(accountAddress: string, entryPointAddress: string, publicClient: PublicClient) {
+    this.sdk = new MultiLevelAccountSDK(accountAddress, entryPointAddress, publicClient);
   }
   
   watchTransaction(txHash: string, onUpdate: (status: TransactionStatus) => void) {
@@ -519,9 +551,11 @@ async function proposeWithRetry(...args: any[]) {
 ### 3. Monitor Gas Prices
 
 ```typescript
+import { parseGwei } from "viem";
+
 // Check gas prices before proposing
-const feeData = await provider.getFeeData();
-if (feeData.maxFeePerGas && feeData.maxFeePerGas > ethers.parseUnits("100", "gwei")) {
+const fees = await publicClient.estimateFeesPerGas();
+if (fees.maxFeePerGas && fees.maxFeePerGas > parseGwei("100")) {
   console.warn("High gas prices detected");
 }
 ```
@@ -559,14 +593,20 @@ class RateLimitedSDK {
 **Never expose private keys in client-side code:**
 
 ```typescript
+import { createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+
 // Bad: Hardcoded or exposed
-const signer = new ethers.Wallet("0x...", provider);
+const account = privateKeyToAccount("0x...");
 
-// Good: Environment variables (server-side)
-const signer = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
+// Better: environment variables (server-side)
+const account2 = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
 
-// Better: Hardware wallet or key management service
-const signer = await hardwareWallet.getSigner();
+// Create a WalletClient for signing/sending transactions
+const walletClient = createWalletClient({
+  account: account2,
+  transport: http("http://localhost:8545"),
+});
 ```
 
 ### 2. Validate Transactions
@@ -600,7 +640,7 @@ for (const tx of pending) {
 ```typescript
 sdk.monitorTransaction(txHash, (status) => {
   // Verify contract address matches expected
-  // This is handled by ethers.js, but be aware
+  // Your app should still validate configuration (account address, chain, RPC URL).
 });
 ```
 
@@ -639,7 +679,7 @@ sdk.monitorTransaction(txHash, (status) => {
 
 ### Common Issues
 
-1. **"Signer required" error**: Make sure you're passing a Signer (not just Provider) for operations that require signing.
+1. **"WalletClient required" error**: Methods that write on-chain (propose/sign/deny/execute) require a viem `WalletClient`.
 
 2. **"Level not initialized" error**: Call `initialize()` on SignerInterface before using it.
 

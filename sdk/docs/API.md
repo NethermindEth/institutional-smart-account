@@ -1,42 +1,48 @@
-# Multi-Level Account SDK API Documentation
+# Multi-Level Account SDK API Documentation (viem)
+
+This SDK is **viem-first**. The canonical implementation is in `sdk/src/` (compiled output is published under `dist/sdk/`).
 
 ## MultiLevelAccountSDK
 
-Main SDK class for interacting with MultiLevelAccount contracts.
+Main SDK class for interacting with a deployed `MultiLevelAccount` + ERC-4337 `EntryPoint`.
 
 ### Constructor
 
 ```typescript
 new MultiLevelAccountSDK(
-  accountAddress: string,
-  entryPointAddress: string,
-  providerOrSigner: Provider | Signer,
-  accountAbi?: any[],
-  entryPointAbi?: any[]
+  accountAddress: Address | string,
+  entryPointAddress: Address | string,
+  publicClientOrRpcUrl: PublicClient | string,
+  walletClient?: WalletClient,
+  bundlerUrl?: string
 )
 ```
+
+Notes:
+- `publicClientOrRpcUrl` can be a pre-configured viem `PublicClient` **or** a JSON-RPC URL string.
+- `walletClient` is required for any method that sends a transaction.
 
 ### Methods
 
 #### proposeTransaction
 
-Propose a transaction via ERC-4337 UserOp.
+Propose a transaction via ERC-4337 (build + sign + submit a UserOperation).
 
 ```typescript
 async proposeTransaction(
-  to: string,
+  to: Address | string,
   value: bigint,
-  data: string,
+  data: Hex | string,
   amount: bigint,
   bundlerUrl?: string
 ): Promise<string>
 ```
 
-Returns the transaction hash.
+Returns the **internal** `txHash` emitted by `MultiLevelAccount.TransactionProposed` (this is the hash used for approvals).
 
 #### getSignerInterface
 
-Get a signer interface for a specific level.
+Get a signer interface for a specific approval level.
 
 ```typescript
 getSignerInterface(levelId: number): SignerInterface
@@ -57,7 +63,7 @@ Returns an unsubscribe function.
 
 #### getTransactionStatus
 
-Get current transaction status.
+Get the current aggregated status across account + levels.
 
 ```typescript
 async getTransactionStatus(txHash: string): Promise<TransactionStatus>
@@ -65,15 +71,17 @@ async getTransactionStatus(txHash: string): Promise<TransactionStatus>
 
 #### executeApprovedTransaction
 
-Execute a fully approved transaction.
+Execute a fully approved transaction (sends a transaction to the account contract).
 
 ```typescript
-async executeApprovedTransaction(txHash: string): Promise<string>
+async executeApprovedTransaction(txHash: Hex | string): Promise<string>
 ```
+
+Returns the transaction hash of the execution call.
 
 #### configureAmountRange
 
-Configure amount range routing (owner only).
+Owner-only helper to configure routing for a given amount range.
 
 ```typescript
 async configureAmountRange(
@@ -82,8 +90,10 @@ async configureAmountRange(
   levelIds: number[],
   quorums: number[],
   timelocks: number[]
-): Promise<void>
+): Promise<string>
 ```
+
+Returns the transaction hash of the configuration call.
 
 ## SignerInterface
 
@@ -93,7 +103,7 @@ Privacy-preserving interface for signers at a specific level.
 
 #### initialize
 
-Initialize the interface (loads level contract).
+Loads the level contract address for this `levelId`.
 
 ```typescript
 async initialize(): Promise<void>
@@ -101,7 +111,7 @@ async initialize(): Promise<void>
 
 #### getPendingTransactions
 
-Get all pending transactions at this level.
+Get all pending transactions at this level (not approved/denied).
 
 ```typescript
 async getPendingTransactions(): Promise<PendingTransaction[]>
@@ -109,42 +119,50 @@ async getPendingTransactions(): Promise<PendingTransaction[]>
 
 #### sign
 
-Sign (approve) a transaction.
+Sign (approve) a transaction at this level.
 
 ```typescript
-async sign(txHash: string): Promise<void>
+async sign(txHash: Hex | string): Promise<string>
 ```
+
+Returns the transaction hash of the signing call. Requires a `WalletClient`.
 
 #### deny
 
-Deny (veto) a transaction.
+Deny (veto) a transaction at this level.
 
 ```typescript
-async deny(txHash: string): Promise<void>
+async deny(txHash: Hex | string): Promise<string>
 ```
+
+Returns the transaction hash of the denial call. Requires a `WalletClient`.
 
 #### completeTimelock
 
 Complete timelock after expiry.
 
 ```typescript
-async completeTimelock(txHash: string): Promise<void>
+async completeTimelock(txHash: Hex | string): Promise<string>
 ```
+
+Returns the transaction hash of the completion call. Requires a `WalletClient`.
 
 #### getMyStatus
 
-Get signing status for current signer.
+Get signing status for the connected wallet at this level.
 
 ```typescript
-async getMyStatus(txHash: string): Promise<{
+async getMyStatus(txHash: Hex | string): Promise<{
   signed: boolean;
   denied: boolean;
 }>
 ```
 
+Requires a `WalletClient`.
+
 #### getCoSigners
 
-Get all co-signers at this level.
+Get the signer addresses at this level.
 
 ```typescript
 async getCoSigners(): Promise<string[]>
@@ -152,13 +170,13 @@ async getCoSigners(): Promise<string[]>
 
 #### onNewTransaction
 
-Subscribe to new transactions at this level.
+Subscribe to new transactions submitted to this level. Implemented via polling on viem.
 
 ```typescript
-onNewTransaction(
-  callback: (txHash: string) => void
-): () => void
+onNewTransaction(callback: (txHash: string) => void): () => void
 ```
+
+Call `initialize()` first.
 
 ## Types
 

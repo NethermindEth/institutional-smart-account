@@ -1,12 +1,20 @@
-import { ethers } from "ethers";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { MultiLevelAccountSDK } from "../src/MultiLevelAccountSDK";
 
 /**
  * Example: Execute a fully approved transaction
  */
 async function executeApproved() {
-  // Setup provider (anyone can execute, no signer needed)
-  const provider = new ethers.JsonRpcProvider("http://localhost:8545");
+  // Anyone can execute, but someone still needs to pay gas for the execution tx.
+  const rpcUrl = "http://localhost:8545";
+  const publicClient = createPublicClient({ transport: http(rpcUrl) });
+
+  const executorAccount = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account: executorAccount,
+    transport: http(rpcUrl),
+  });
   
   // Initialize SDK
   const accountAddress = "0x..."; // Your MultiLevelAccount address
@@ -15,7 +23,8 @@ async function executeApproved() {
   const sdk = new MultiLevelAccountSDK(
     accountAddress,
     entryPointAddress,
-    provider
+    publicClient,
+    walletClient
   );
   
   const txHash = "0x..."; // Transaction hash to execute
@@ -30,8 +39,8 @@ async function executeApproved() {
   }
   
   // Execute the transaction
-  const txReceipt = await sdk.executeApprovedTransaction(txHash);
-  console.log("Transaction executed:", txReceipt);
+  const execTxHash = await sdk.executeApprovedTransaction(txHash);
+  console.log("Execution tx hash:", execTxHash);
 }
 
 executeApproved().catch(console.error);

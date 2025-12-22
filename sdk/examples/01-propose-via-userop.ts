@@ -1,13 +1,20 @@
-import { ethers } from "ethers";
+import { createPublicClient, createWalletClient, http, parseEther } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { MultiLevelAccountSDK } from "../src/MultiLevelAccountSDK";
 
 /**
  * Example: Propose a transaction via ERC-4337 UserOp
  */
 async function proposeTransaction() {
-  // Setup provider and signer
-  const provider = new ethers.JsonRpcProvider("http://localhost:8545");
-  const signer = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
+  const rpcUrl = "http://localhost:8545";
+  const publicClient = createPublicClient({ transport: http(rpcUrl) });
+
+  // Owner wallet (required for proposing; must be the on-chain account owner)
+  const ownerAccount = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account: ownerAccount,
+    transport: http(rpcUrl),
+  });
   
   // Initialize SDK
   const accountAddress = "0x..."; // Your MultiLevelAccount address
@@ -16,14 +23,17 @@ async function proposeTransaction() {
   const sdk = new MultiLevelAccountSDK(
     accountAddress,
     entryPointAddress,
-    signer
+    publicClient,
+    walletClient,
+    // Optional default bundler URL:
+    // "http://localhost:14337/rpc"
   );
   
   // Propose transaction
   const to = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb";
-  const value = ethers.parseEther("1");
+  const value = parseEther("1");
   const data = "0x";
-  const amount = ethers.parseEther("5000"); // Amount for routing
+  const amount = parseEther("5000"); // Amount for routing
   
   const txHash = await sdk.proposeTransaction(
     to,

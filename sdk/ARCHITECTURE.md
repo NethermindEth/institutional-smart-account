@@ -33,10 +33,10 @@ The SDK provides a TypeScript interface for interacting with Multi-Level Account
 │  └──────────────────────────────────────────────────────┘   │
 └───────────────┬─────────────────────────────────────────────┘
                 │
-                │ ethers.js
+                │ viem (PublicClient / WalletClient)
                 ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Blockchain (via Provider)                      │
+│              Blockchain (via JSON-RPC)                      │
 │  - MultiLevelAccount Contract                               │
 │  - Level Contracts                                          │
 │  - EntryPoint Contract                                      │
@@ -160,7 +160,7 @@ Signer Application
     │
     ├─> MultiLevelAccountSDK.getSignerInterface(levelId)
     │       │
-    │       └─> new SignerInterface(account, levelId, signer)
+    │       └─> new SignerInterface(accountAddress, levelId, publicClient, walletClient)
     │
     ├─> SignerInterface.initialize()
     │       │
@@ -261,7 +261,7 @@ The `UserOpBuilder` uses the builder pattern:
    - Descriptive error messages
 
 3. **Network Errors**: Provider/RPC failures
-   - Handled by ethers.js
+   - Handled by viem / your RPC provider
    - Should be caught by application
 
 ### Error Handling Strategy
@@ -407,7 +407,7 @@ const unsubscribe = sdk.monitorTransaction(txHash, (status) => {
 
 - Never expose private keys in client-side code
 - Use secure key management (hardware wallets, key management services)
-- SignerInterface requires a Signer (not just Provider) for signing operations
+- SignerInterface requires a `WalletClient` for signing operations
 
 ### Transaction Validation
 

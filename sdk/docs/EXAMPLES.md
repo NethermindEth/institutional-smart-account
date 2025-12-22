@@ -19,26 +19,34 @@ See `examples/04-execute-approved.ts`
 ## Complete Flow Example
 
 ```typescript
-import { ethers } from "ethers";
-import { MultiLevelAccountSDK } from "./sdk/src/MultiLevelAccountSDK";
+import { createPublicClient, createWalletClient, http, parseEther } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { MultiLevelAccountSDK } from "../src/MultiLevelAccountSDK";
 
 async function completeFlow() {
-  const provider = new ethers.JsonRpcProvider("http://localhost:8545");
-  const owner = new ethers.Wallet(process.env.OWNER_KEY!, provider);
-  const signer1 = new ethers.Wallet(process.env.SIGNER1_KEY!, provider);
+  const rpcUrl = "http://localhost:8545";
+  const publicClient = createPublicClient({ transport: http(rpcUrl) });
+
+  // Owner wallet (used to propose)
+  const ownerAccount = privateKeyToAccount(process.env.OWNER_PRIVATE_KEY as `0x${string}`);
+  const ownerWalletClient = createWalletClient({
+    account: ownerAccount,
+    transport: http(rpcUrl),
+  });
   
   const sdk = new MultiLevelAccountSDK(
     "0x...",
     "0x...",
-    owner
+    publicClient,
+    ownerWalletClient
   );
   
   // 1. Owner proposes transaction
   const txHash = await sdk.proposeTransaction(
     "0x...",
-    ethers.parseEther("100"),
+    parseEther("100"),
     "0x",
-    ethers.parseEther("50000")
+    parseEther("50000")
   );
   
   // 2. Signers approve

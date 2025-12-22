@@ -1,13 +1,20 @@
-import { ethers } from "ethers";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { MultiLevelAccountSDK } from "../src/MultiLevelAccountSDK";
 
 /**
  * Example: Sign a transaction as a level signer
  */
 async function signTransaction() {
-  // Setup provider and signer
-  const provider = new ethers.JsonRpcProvider("http://localhost:8545");
-  const signer = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
+  const rpcUrl = "http://localhost:8545";
+  const publicClient = createPublicClient({ transport: http(rpcUrl) });
+
+  // This should be a signer key authorized at the target level
+  const signerAccount = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
+  const walletClient = createWalletClient({
+    account: signerAccount,
+    transport: http(rpcUrl),
+  });
   
   // Initialize SDK
   const accountAddress = "0x..."; // Your MultiLevelAccount address
@@ -16,7 +23,8 @@ async function signTransaction() {
   const sdk = new MultiLevelAccountSDK(
     accountAddress,
     entryPointAddress,
-    signer
+    publicClient,
+    walletClient
   );
   
   // Get signer interface for Level 1
@@ -36,7 +44,8 @@ async function signTransaction() {
     
     if (!myStatus.signed && !myStatus.denied) {
       // Sign the transaction
-      await level1Interface.sign(txHash);
+      const signTx = await level1Interface.sign(txHash);
+      console.log("Sign transaction hash:", signTx);
       console.log("Transaction signed:", txHash);
     }
     
@@ -46,7 +55,8 @@ async function signTransaction() {
     
     if (tx && tx.signaturesCollected >= tx.signaturesRequired && tx.timelockRemaining === 0) {
       // Complete timelock
-      await level1Interface.completeTimelock(txHash);
+      const completeTx = await level1Interface.completeTimelock(txHash);
+      console.log("CompleteTimelock tx hash:", completeTx);
       console.log("Timelock completed:", txHash);
     }
   }

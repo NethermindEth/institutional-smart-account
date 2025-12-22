@@ -1,12 +1,13 @@
-import { ethers } from "ethers";
 import { MultiLevelAccountSDK } from "../src/MultiLevelAccountSDK";
+import { createPublicClient, http } from "viem";
 
 /**
  * Example: Monitor transaction progress
  */
 async function monitorProgress() {
-  // Setup provider
-  const provider = new ethers.JsonRpcProvider("http://localhost:8545");
+  // Setup public client (read-only)
+  const rpcUrl = "http://localhost:8545";
+  const publicClient = createPublicClient({ transport: http(rpcUrl) });
   
   // Initialize SDK (read-only, no signer needed)
   const accountAddress = "0x..."; // Your MultiLevelAccount address
@@ -15,7 +16,7 @@ async function monitorProgress() {
   const sdk = new MultiLevelAccountSDK(
     accountAddress,
     entryPointAddress,
-    provider
+    publicClient
   );
   
   const txHash = "0x..."; // Transaction hash to monitor
