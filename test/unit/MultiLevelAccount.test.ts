@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 import { MultiLevelAccount, MultiLevelAccountFactory, Level } from "../../typechain-types";
 import { IEntryPoint } from "../../typechain-types/@account-abstraction/contracts/interfaces";
 import { deployFixture, DeployFixture } from "../helpers/fixtures";
@@ -9,7 +10,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
   let account: MultiLevelAccount;
   let factory: MultiLevelAccountFactory;
   let entryPoint: IEntryPoint;
-  let owner: any;
+  let owner: SignerWithAddress;
   let level1: Level;
   let level2: Level;
   let level3: Level;
@@ -37,7 +38,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
 
       const tx = await account.connect(owner).addLevel(await newLevel.getAddress());
       const receipt = await tx.wait();
-      
+
       const event = receipt?.logs
         .map((log) => {
           try {
@@ -79,7 +80,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         .find((parsed) => parsed && parsed.name === "AmountRangeConfigured");
 
       expect(event).to.not.be.null;
-      
+
       // Find the range we just added (ranges are sorted by minAmount)
       const rangeCount = await account.getAmountRangeCount();
       let found = false;
@@ -155,9 +156,9 @@ describe("MultiLevelAccount - Unit Tests", () => {
 
     it("Should remove amount range", async () => {
       const initialCount = await account.getAmountRangeCount();
-      
+
       await account.connect(owner).removeAmountRange(0);
-      
+
       const newCount = await account.getAmountRangeCount();
       expect(newCount).to.equal(initialCount - 1n);
     });
@@ -172,7 +173,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       );
 
       await account.connect(owner).updateLevel(1, await newLevel.getAddress());
-      
+
       expect(await account.levelContracts(1)).to.equal(await newLevel.getAddress());
     });
 
@@ -206,7 +207,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
 
       const tx = await account.connect(owner).addLevel(await newLevel.getAddress());
       const receipt = await tx.wait();
-      
+
       const event = receipt?.logs
         .map((log) => {
           try {
@@ -248,7 +249,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       );
 
       await account.connect(owner).updateLevel(1, await newLevel.getAddress());
-      
+
       expect(await account.levelContracts(1)).to.equal(await newLevel.getAddress());
     });
 
@@ -263,11 +264,11 @@ describe("MultiLevelAccount - Unit Tests", () => {
       //
       // The fix: We now validate that Level's internal levelId matches the assigned levelId
       // during registration, preventing this mismatch from occurring.
-      
+
       const newLevelSigners = [fixture.others[0].address, fixture.others[1].address];
       const LevelFactory = await ethers.getContractFactory("Level");
       const nextLevelId = await account.nextLevelId();
-      
+
       // Deploy Level with matching levelId
       const newLevel = await LevelFactory.deploy(
         await account.getAddress(),
@@ -277,13 +278,13 @@ describe("MultiLevelAccount - Unit Tests", () => {
 
       // Verify the Level's internal levelId matches what will be assigned
       expect(await newLevel.levelId()).to.equal(nextLevelId);
-      
+
       // Add the level (should succeed because levelId matches)
       await account.connect(owner).addLevel(await newLevel.getAddress());
-      
+
       // Verify the level is registered correctly
       expect(await account.levelContracts(nextLevelId)).to.equal(await newLevel.getAddress());
-      
+
       // Verify that the onlyLevel modifier would pass:
       // msg.sender (newLevel) == levelContracts[nextLevelId] (newLevel)
       // This ensures onLevelApproved callbacks will succeed
@@ -296,7 +297,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
     it("Should get correct config for amount in range", async () => {
       const amount = ethers.parseEther("5000");
       const config = await account.getConfigForAmount(amount);
-      
+
       expect(config.levelIds.length).to.equal(1);
       expect(config.levelIds[0]).to.equal(1n);
     });
@@ -304,7 +305,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
     it("Should get correct config for multi-level amount", async () => {
       const amount = ethers.parseEther("50000");
       const config = await account.getConfigForAmount(amount);
-      
+
       expect(config.levelIds.length).to.equal(2);
       expect(config.levelIds[0]).to.equal(1n);
       expect(config.levelIds[1]).to.equal(2n);
@@ -313,7 +314,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
     it("Should get correct config for high amount", async () => {
       const amount = ethers.parseEther("2000000");
       const config = await account.getConfigForAmount(amount);
-      
+
       expect(config.levelIds.length).to.equal(3);
       expect(config.levelIds[0]).to.equal(1n);
       expect(config.levelIds[1]).to.equal(2n);
@@ -338,7 +339,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       for (let i = Number(count) - 1; i >= 0; i--) {
         await account.connect(owner).removeAmountRange(i);
       }
-      
+
       // Add a range that doesn't cover all amounts
       await account.connect(owner).configureAmountRange(
         ethers.parseEther("10000"),
@@ -347,7 +348,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         [2],
         [3600]
       );
-      
+
       // Try to get config for amount below range (amount < minAmount)
       await expect(
         account.getConfigForAmount(ethers.parseEther("5000"))
@@ -360,7 +361,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       for (let i = Number(count) - 1; i >= 0; i--) {
         await account.connect(owner).removeAmountRange(i);
       }
-      
+
       // Add a range
       await account.connect(owner).configureAmountRange(
         ethers.parseEther("10000"),
@@ -369,7 +370,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         [2],
         [3600]
       );
-      
+
       // Try to get config for amount above range (amount > maxAmount)
       await expect(
         account.getConfigForAmount(ethers.parseEther("30000"))
@@ -422,7 +423,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       // This would be called via EntryPoint in real scenario
       // For testing, we can check nonce increments
       const nonceBefore = await account.nonce();
-      
+
       // Note: We can't directly call execute() as it's protected by onlyEntryPoint
       // This test verifies the nonce is accessible
       expect(nonceBefore).to.be.a("bigint");
@@ -435,7 +436,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       // This is a placeholder test structure
       const txHash = ethers.ZeroHash;
       const tx = await account.getTransaction(txHash);
-      
+
       // Empty transaction should have zero address
       expect(tx.to).to.equal(ethers.ZeroAddress);
     });
@@ -449,7 +450,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
   describe("Level Management", () => {
     it("Should update existing level", async () => {
       const level1Address = await account.levelContracts(1);
-      
+
       // Deploy new level contract
       const LevelFactory = await ethers.getContractFactory("Level");
       const newLevel = await LevelFactory.deploy(
@@ -457,9 +458,9 @@ describe("MultiLevelAccount - Unit Tests", () => {
         1,
         [fixture.ops1.address, fixture.ops2.address]
       );
-      
+
       await account.connect(fixture.owner).updateLevel(1, await newLevel.getAddress());
-      
+
       expect(await account.levelContracts(1)).to.equal(await newLevel.getAddress());
       expect(await account.levelContracts(1)).to.not.equal(level1Address);
     });
@@ -471,7 +472,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         99,
         [fixture.ops1.address]
       );
-      
+
       await expect(
         account.connect(fixture.owner).updateLevel(99, await newLevel.getAddress())
       ).to.be.revertedWithCustomError(account, "InvalidConfiguration");
@@ -489,7 +490,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
       for (let i = Number(initialCount) - 1; i >= 0; i--) {
         await account.connect(fixture.owner).removeAmountRange(i);
       }
-      
+
       // Add multiple ranges in unsorted order to test sorting
       await account.connect(fixture.owner).configureAmountRange(
         ethers.parseEther("50000"),
@@ -498,7 +499,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         [2],
         [3600]
       );
-      
+
       await account.connect(fixture.owner).configureAmountRange(
         ethers.parseEther("30000"),
         ethers.parseEther("40000"),
@@ -506,7 +507,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         [2],
         [3600]
       );
-      
+
       await account.connect(fixture.owner).configureAmountRange(
         ethers.parseEther("10000"),
         ethers.parseEther("20000"),
@@ -514,7 +515,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         [2],
         [3600]
       );
-      
+
       // Verify ranges are sorted (should be 10000, 30000, 50000)
       const range0 = await account.getAmountRange(0);
       const range1 = await account.getAmountRange(1);
@@ -522,15 +523,15 @@ describe("MultiLevelAccount - Unit Tests", () => {
       expect(range0.minAmount).to.equal(ethers.parseEther("10000"));
       expect(range1.minAmount).to.equal(ethers.parseEther("30000"));
       expect(range2.minAmount).to.equal(ethers.parseEther("50000"));
-      
+
       // Remove a range in the middle (not the last one)
       // This tests the swap-and-pop logic
       await account.connect(fixture.owner).removeAmountRange(1);
-      
+
       // Verify removed
       const countAfter = await account.getAmountRangeCount();
       expect(countAfter).to.equal(2n);
-      
+
       // Verify ranges are still sorted after removal
       const rangeCount = await account.getAmountRangeCount();
       let prevMin = 0n;
@@ -544,7 +545,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
     it("Should reject removing invalid index", async () => {
       const count = await account.getAmountRangeCount();
       const invalidIndex = count;
-      
+
       await expect(
         account.connect(fixture.owner).removeAmountRange(invalidIndex)
       ).to.be.revertedWithCustomError(account, "InvalidConfiguration");
@@ -557,7 +558,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         4,
         [fixture.others[0].address]
       );
-      
+
       // Account is already initialized, so this should fail
       await expect(
         account.connect(fixture.others[0]).addLevelDuringInit(await newLevel.getAddress())
@@ -575,74 +576,74 @@ describe("MultiLevelAccount - Unit Tests", () => {
   describe("ERC-4337 Validation", () => {
     it("Should reject invalid signature in validateUserOp", async () => {
       const { createUserOp, getUserOpHash, signUserOp } = await import("../helpers/userOp");
-      
+
       const to = fixture.others[0].address;
       const value = ethers.parseEther("1");
       const data = "0x";
       const amount = ethers.parseEther("5000");
-      
+
       const nonce = await account.nonce();
       const callData = account.interface.encodeFunctionData("execute", [to, value, data, amount]);
-      
+
       const userOp = createUserOp({
         sender: await account.getAddress(),
         nonce,
         callData
       });
-      
+
       const chainId = (await ethers.provider.getNetwork()).chainId;
       const userOpHash = getUserOpHash(userOp, await entryPoint.getAddress(), chainId);
-      
+
       // Sign with wrong signer (not owner)
       const wrongSignature = await signUserOp(userOp, fixture.ops1, await entryPoint.getAddress(), chainId);
       userOp.signature = wrongSignature;
-      
+
       // Impersonate EntryPoint
       await ethers.provider.send("hardhat_impersonateAccount", [await entryPoint.getAddress()]);
       const entryPointSigner = await ethers.getSigner(await entryPoint.getAddress());
-      
+
       const validationData = await account.connect(entryPointSigner).validateUserOp.staticCall(
         userOp,
         userOpHash,
         0
       );
-      
+
       // Should return 1 (SIG_VALIDATION_FAILED)
       expect(validationData).to.equal(1n);
     });
 
     it("Should handle missingAccountFunds in validateUserOp", async () => {
       const { createUserOp, getUserOpHash, signUserOp } = await import("../helpers/userOp");
-      
+
       const to = fixture.others[0].address;
       const value = ethers.parseEther("1");
       const data = "0x";
       const amount = ethers.parseEther("5000");
-      
+
       const nonce = await account.nonce();
       const callData = account.interface.encodeFunctionData("execute", [to, value, data, amount]);
-      
+
       const userOp = createUserOp({
         sender: await account.getAddress(),
         nonce,
         callData
       });
-      
+
       const chainId = (await ethers.provider.getNetwork()).chainId;
       const userOpHash = getUserOpHash(userOp, await entryPoint.getAddress(), chainId);
       const signature = await signUserOp(userOp, owner, await entryPoint.getAddress(), chainId);
       userOp.signature = signature;
-      
+
       // Fund account for prefund
       await owner.sendTransaction({
         to: await account.getAddress(),
         value: ethers.parseEther("10")
       });
-      
+
       // Impersonate EntryPoint
       await ethers.provider.send("hardhat_impersonateAccount", [await entryPoint.getAddress()]);
       const entryPointSigner = await ethers.getSigner(await entryPoint.getAddress());
-      
+
       // Test with missingAccountFunds > 0
       const missingFunds = ethers.parseEther("1");
       const validationData = await account.connect(entryPointSigner).validateUserOp.staticCall(
@@ -650,7 +651,7 @@ describe("MultiLevelAccount - Unit Tests", () => {
         userOpHash,
         missingFunds
       );
-      
+
       // Should return 0 (validation succeeded)
       expect(validationData).to.equal(0n);
     });
@@ -661,57 +662,57 @@ describe("MultiLevelAccount - Unit Tests", () => {
       // Create a contract that reverts on receive
       const RevertingContractFactory = await ethers.getContractFactory("RevertingContract");
       const revertingContract = await RevertingContractFactory.deploy();
-      
+
       // Propose a transaction that will fail
       const to = await revertingContract.getAddress();
       const value = ethers.parseEther("1");
       const data = "0x";
       const amount = ethers.parseEther("5000");
-      
+
       // Fund account
       await owner.sendTransaction({
         to: await account.getAddress(),
         value: ethers.parseEther("100")
       });
-      
+
       // Propose via EntryPoint
       const { createUserOp, getUserOpHash, signUserOp } = await import("../helpers/userOp");
       const nonce = await account.nonce();
       const callData = account.interface.encodeFunctionData("execute", [to, value, data, amount]);
-      
+
       const userOp = createUserOp({
         sender: await account.getAddress(),
         nonce,
         callData
       });
-      
+
       const chainId = (await ethers.provider.getNetwork()).chainId;
       const userOpHash = getUserOpHash(userOp, await entryPoint.getAddress(), chainId);
       const signature = await signUserOp(userOp, owner, await entryPoint.getAddress(), chainId);
       userOp.signature = signature;
-      
+
       await entryPoint.handleOps([userOp], owner.address);
-      
+
       // Get transaction hash
       const filter = account.filters.TransactionProposed();
       const events = await account.queryFilter(filter);
       const txHash = events[events.length - 1].args[0];
-      
+
       // Approve through level 1
       await level1.connect(fixture.ops1).sign(txHash);
       await level1.connect(fixture.ops2).sign(txHash);
-      
+
       await ethers.provider.send("evm_increaseTime", [3601]);
       await ethers.provider.send("evm_mine", []);
       await level1.completeTimelock(txHash);
-      
+
       // Wait for state to propagate
       await ethers.provider.send("evm_mine", []);
-      
+
       // Check if fully approved
       const fullyApproved = await account.fullyApproved(txHash);
       expect(fullyApproved).to.be.true;
-      
+
       // Execution should revert with TransactionFailed
       await expect(
         account.executeApprovedTransaction(txHash)
@@ -726,44 +727,44 @@ describe("MultiLevelAccount - Unit Tests", () => {
       const value = ethers.parseEther("1");
       const data = "0x";
       const amount = ethers.parseEther("5000"); // Single level
-      
+
       // Fund account
       await owner.sendTransaction({
         to: await account.getAddress(),
         value: ethers.parseEther("100")
       });
-      
+
       // Propose via EntryPoint
       const { createUserOp, getUserOpHash, signUserOp } = await import("../helpers/userOp");
       const nonce = await account.nonce();
       const callData = account.interface.encodeFunctionData("execute", [to, value, data, amount]);
-      
+
       const userOp = createUserOp({
         sender: await account.getAddress(),
         nonce,
         callData
       });
-      
+
       const chainId = (await ethers.provider.getNetwork()).chainId;
       const userOpHash = getUserOpHash(userOp, await entryPoint.getAddress(), chainId);
       const signature = await signUserOp(userOp, owner, await entryPoint.getAddress(), chainId);
       userOp.signature = signature;
-      
+
       await entryPoint.handleOps([userOp], owner.address);
-      
+
       // Get transaction hash
       const filter = account.filters.TransactionProposed();
       const events = await account.queryFilter(filter);
       const txHash = events[events.length - 1].args[0];
-      
+
       // Approve through level 1 (the only level for this amount)
       await level1.connect(fixture.ops1).sign(txHash);
       await level1.connect(fixture.ops2).sign(txHash);
-      
+
       await ethers.provider.send("evm_increaseTime", [3601]);
       await ethers.provider.send("evm_mine", []);
       await level1.completeTimelock(txHash);
-      
+
       // Should be fully approved (no more levels)
       const fullyApproved = await account.fullyApproved(txHash);
       expect(fullyApproved).to.be.true;

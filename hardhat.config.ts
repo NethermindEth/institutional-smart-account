@@ -10,7 +10,7 @@ import * as dotenv from "dotenv";
 // Load .env file
 dotenv.config();
 
-const config: HardhatUserConfig = {
+const config: HardhatUserConfig & { coverage?: unknown } = {
   solidity: {
     compilers: [
       {
@@ -35,10 +35,19 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
-      chainId: 31337,
+      chainId: 11155111,
+      forking: {
+        url: "https://rpc.ankr.com/eth_sepolia/2c3a543973e2b935be5e6d4b080d7f95b50b2ce0fc4f1bb651d7d95be33072ae",
+        enabled: true,
+      },
     },
     localhost: {
-      url: "http://127.0.0.1:8545",
+      url: "http://localhost:8545",
+      chainId: 11155111,
+      // Default Anvil test key (same one used by Pimlico's docker guide)
+      accounts: [
+        "0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97",
+      ],
     },
     sepolia: {
       url: process.env.SEPOLIA_RPC_URL || "",

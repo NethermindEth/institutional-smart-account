@@ -1,9 +1,8 @@
 import type { Address, Hex, PublicClient, WalletClient } from "viem";
-import { encodeFunctionData, keccak256, encodePacked } from "viem";
-import { http } from "viem";
+import { encodeAbiParameters, keccak256, encodePacked } from "viem";
 import { MultiLevelAccountPlugin, type MultiLevelAccountExecuteParams } from "./plugins/MultiLevelAccountPlugin";
 import type { PackedUserOperation } from "./types";
-import { MULTI_LEVEL_ACCOUNT_ABI, ENTRY_POINT_ABI } from "./contracts/abis";
+import { ENTRY_POINT_ABI } from "./contracts/abis";
 
 /**
  * UserOpBuilder using permissionless.js and viem
@@ -18,14 +17,14 @@ export class UserOpBuilder {
   private walletClient?: WalletClient;
   private plugin: MultiLevelAccountPlugin;
   private _bundlerUrl?: string;
-  
+
   /**
    * Set bundler URL (can be updated dynamically)
    */
   setBundlerUrl(bundlerUrl: string | undefined): void {
     this._bundlerUrl = bundlerUrl;
   }
-  
+
   get bundlerUrl(): string | undefined {
     return this._bundlerUrl;
   }
@@ -42,7 +41,7 @@ export class UserOpBuilder {
     this.publicClient = publicClient;
     this.walletClient = walletClient;
     this._bundlerUrl = bundlerUrl;
-    
+
     this.plugin = new MultiLevelAccountPlugin(
       accountAddress,
       entryPointAddress,
@@ -65,21 +64,25 @@ export class UserOpBuilder {
         console.warn("Failed to get gas prices from bundler, falling back to standard estimation:", error);
       }
     }
-    
+
     // Fall back to standard fee estimation
     try {
       const feeData = await this.publicClient.estimateFeesPerGas();
       const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || 1000000000n; // 1 gwei default
       const maxFeePerGas = feeData.maxFeePerGas || 2000000000n; // 2 gwei default
-      
+
       // Add a small buffer to ensure we meet minimum requirements
       return {
         maxPriorityFeePerGas,
         maxFeePerGas: maxFeePerGas + (maxFeePerGas / 10n) // Add 10% buffer
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Fallback for chains that don't support EIP-1559 (like hardhat)
-      if (error?.name === "Eip1559FeesNotSupportedError" || error?.message?.includes("EIP-1559")) {
+      const err = error as { name?: unknown; message?: unknown } | null | undefined;
+      const name = typeof err?.name === "string" ? err.name : undefined;
+      const message = typeof err?.message === "string" ? err.message : undefined;
+
+      if (name === "Eip1559FeesNotSupportedError" || message?.includes("EIP-1559")) {
         // Use gas price for legacy chains
         const gasPrice = await this.publicClient.getGasPrice();
         return {
@@ -95,13 +98,13 @@ export class UserOpBuilder {
       }
     }
   }
-  
+
   /**
    * Get gas prices from bundler using pimlico_getUserOperationGasPrice or similar
    */
   private async getBundlerGasPrices(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | null> {
     if (!this._bundlerUrl) return null;
-    
+
     try {
       // Try Pimlico's gas price endpoint first
       const response = await fetch(this._bundlerUrl, {
@@ -114,7 +117,7 @@ export class UserOpBuilder {
           params: []
         })
       });
-      
+
       const result = (await response.json()) as {
         error?: { message: string; code: number };
         result?: {
@@ -123,21 +126,21 @@ export class UserOpBuilder {
           fast?: { maxFeePerGas: string; maxPriorityFeePerGas: string };
         };
       };
-      
+
       if (result.error) {
         // Try alternative method: eth_estimateUserOperationGas with dummy UserOp
         return null;
       }
-      
+
       if (result.result) {
         const { slow, standard, fast } = result.result;
         // Use standard pricing (or fast if standard not available)
         const pricing = standard || fast || slow;
-        
+
         if (pricing && pricing.maxFeePerGas && pricing.maxPriorityFeePerGas) {
           const maxFeePerGas = BigInt(pricing.maxFeePerGas);
           const maxPriorityFeePerGas = BigInt(pricing.maxPriorityFeePerGas);
-          
+
           // Add a small buffer (5%) to ensure we meet minimum requirements
           return {
             maxFeePerGas: maxFeePerGas + (maxFeePerGas / 20n), // Add 5% buffer
@@ -145,11 +148,11 @@ export class UserOpBuilder {
           };
         }
       }
-    } catch (error) {
+    } catch {
       // If bundler doesn't support this method, return null to fall back
       return null;
     }
-    
+
     return null;
   }
 
@@ -159,13 +162,13 @@ export class UserOpBuilder {
   async buildUserOp(params: MultiLevelAccountExecuteParams): Promise<PackedUserOperation> {
     // Get nonce
     const nonce = await this.plugin.getNonce();
-    
+
     // Encode execute call
     const callData = this.plugin.encodeExecute(params);
-    
+
     // Get fee data - try bundler first, then fall back to standard estimation
     const { maxFeePerGas, maxPriorityFeePerGas } = await this.getGasPrices();
-    
+
     // Pack gas limits (verificationGasLimit, callGasLimit)
     // Packed as two uint128 values in bytes32
     // Use higher limits to avoid validation failures
@@ -174,11 +177,11 @@ export class UserOpBuilder {
     const verificationGasLimit = 1000000n; // Increased significantly for validateUserOp + prefund
     const callGasLimit = 500000n; // Increased for execute function
     const accountGasLimits = this._packAccountGasLimits(verificationGasLimit, callGasLimit);
-    
+
     // Pack gas fees (maxPriorityFeePerGas, maxFeePerGas)
     // Packed as two uint128 values in bytes32
     const gasFees = this._packGasFees(maxPriorityFeePerGas, maxFeePerGas);
-    
+
     return {
       sender: this.accountAddress,
       nonce,
@@ -207,16 +210,16 @@ export class UserOpBuilder {
 
     // Get chain ID
     const chainId = await this.publicClient.getChainId();
-    
+
     // Calculate userOp hash
     const userOpHash = await this._getUserOpHash(userOp, chainId);
-    
+
     // Sign with wallet client
     const signature = await this.walletClient.signMessage({
       account,
       message: { raw: userOpHash }
     });
-    
+
     return {
       ...userOp,
       signature: signature as Hex
@@ -235,63 +238,74 @@ export class UserOpBuilder {
 
     // Unpack accountGasLimits (bytes32) to verificationGasLimit and callGasLimit (uint128 each)
     const { verificationGasLimit, callGasLimit } = this._unpackAccountGasLimits(userOp.accountGasLimits as Hex);
-    
+
     // Unpack gasFees (bytes32) to maxPriorityFeePerGas and maxFeePerGas (uint128 each)
     const { maxPriorityFeePerGas, maxFeePerGas } = this._unpackGasFees(userOp.gasFees as Hex);
 
     // Convert to hex strings for JSON-RPC
     const toHex = (value: bigint) => `0x${value.toString(16)}`;
 
-    // Build userOp object for bundler - omit empty optional fields
-    // Some bundlers (like Pimlico) don't accept initCode and paymasterAndData if they're empty
-    const bundlerUserOp: Record<string, string> = {
+    const send = async (
+      rpcMethod: string,
+      paramsUserOp: Record<string, string | null>,
+      schemaLabel: string
+    ) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: rpcMethod,
+          params: [paramsUserOp, this.entryPointAddress],
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: { message?: string; code?: number; data?: unknown };
+        result?: Hex;
+      };
+
+      if (result.error) {
+        const dataStr =
+          typeof result.error.data === "string"
+            ? result.error.data
+            : result.error.data
+              ? JSON.stringify(result.error.data)
+              : "";
+        const codeStr = typeof result.error.code === "number" ? ` code=${result.error.code}` : "";
+        const dataSuffix = dataStr ? ` data=${dataStr}` : "";
+        const msg = result.error.message || "Bundler error";
+        throw new Error(`[${rpcMethod} ${schemaLabel}] ${msg}${codeStr}${dataSuffix}`);
+      }
+
+      if (!result.result) {
+        throw new Error(`[${rpcMethod} ${schemaLabel}] No result from bundler`);
+      }
+
+      return result.result;
+    };
+
+    // Build userOp object for bundler (EntryPoint v0.7 JSON-RPC schema).
+    const bundlerUserOpV7: Record<string, string | null> = {
       sender: userOp.sender,
       nonce: toHex(userOp.nonce),
+      factory: null,
+      factoryData: null,
       callData: userOp.callData,
       callGasLimit: toHex(callGasLimit),
       verificationGasLimit: toHex(verificationGasLimit),
       preVerificationGas: toHex(userOp.preVerificationGas),
       maxFeePerGas: toHex(maxFeePerGas),
       maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
-      signature: userOp.signature
+      paymaster: null,
+      paymasterVerificationGasLimit: null,
+      paymasterPostOpGasLimit: null,
+      paymasterData: null,
+      signature: userOp.signature,
     };
 
-    // Only include initCode if it's not empty
-    if (userOp.initCode && userOp.initCode !== "0x" && userOp.initCode.length > 2) {
-      bundlerUserOp.initCode = userOp.initCode;
-    }
-
-    // Only include paymasterAndData if it's not empty
-    if (userOp.paymasterAndData && userOp.paymasterAndData !== "0x" && userOp.paymasterAndData.length > 2) {
-      bundlerUserOp.paymasterAndData = userOp.paymasterAndData;
-    }
-
-    // Submit to bundler via JSON-RPC with unpacked format
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_sendUserOperation",
-        params: [
-          bundlerUserOp,
-          this.entryPointAddress
-        ]
-      })
-    });
-
-    const result = await response.json() as { error?: { message: string }; result?: Hex };
-    if (result.error) {
-      throw new Error(`Bundler error: ${result.error.message}`);
-    }
-
-    if (!result.result) {
-      throw new Error("No result from bundler");
-    }
-
-    // Return the UserOperation hash (not transaction hash yet)
-    return result.result;
+    return await send("eth_sendUserOperation", bundlerUserOpV7, "sendUserOp:v0.7");
   }
 
   /**
@@ -301,7 +315,7 @@ export class UserOpBuilder {
   async getUserOperationReceipt(
     userOpHash: Hex,
     bundlerUrl?: string
-  ): Promise<{ receipt: any; actualTxHash: Hex | null } | null> {
+  ): Promise<{ receipt: unknown; actualTxHash: Hex | null } | null> {
     const url = bundlerUrl || this._bundlerUrl;
     if (!url) {
       throw new Error("Bundler URL required");
@@ -318,8 +332,8 @@ export class UserOpBuilder {
       })
     });
 
-    const result = await response.json() as { 
-      error?: { message: string }; 
+    const result = await response.json() as {
+      error?: { message: string };
       result?: {
         userOpHash: Hex;
         entryPoint: Address;
@@ -329,7 +343,7 @@ export class UserOpBuilder {
         actualGasCost: bigint;
         actualGasUsed: bigint;
         success: boolean;
-        logs: any[];
+        logs: unknown[];
         receipt: {
           transactionHash: Hex;
           transactionIndex: bigint;
@@ -340,7 +354,7 @@ export class UserOpBuilder {
           cumulativeGasUsed: bigint;
           gasUsed: bigint;
           contractAddress: Address | null;
-          logs: any[];
+          logs: unknown[];
           status: "success" | "reverted";
           logsBloom: Hex;
         };
@@ -384,7 +398,7 @@ export class UserOpBuilder {
 
     while (Date.now() - startTime < timeout) {
       const receipt = await this.getUserOperationReceipt(userOpHash, url);
-      
+
       if (receipt && receipt.actualTxHash) {
         return receipt.actualTxHash;
       }
@@ -419,7 +433,7 @@ export class UserOpBuilder {
         }]
       });
       return hash as Hex;
-    } catch (error) {
+    } catch {
       // Fallback to manual calculation if EntryPoint doesn't support it
       return this._computeUserOpHash(userOp, chainId);
     }
@@ -429,35 +443,37 @@ export class UserOpBuilder {
    * Compute UserOperation hash manually
    */
   private _computeUserOpHash(userOp: PackedUserOperation, chainId: number): Hex {
-    // Pack userOp fields
-    const packed = encodePacked(
-      [
-        "address",
-        "uint256",
-        "bytes32",
-        "bytes32",
-        "bytes32",
-        "uint256",
-        "bytes32",
-        "bytes32",
-        "address",
-        "uint256"
-      ],
-      [
-        userOp.sender as Address,
-        userOp.nonce,
-        keccak256(userOp.initCode as Hex),
-        keccak256(userOp.callData as Hex),
-        userOp.accountGasLimits as Hex,
-        userOp.preVerificationGas,
-        userOp.gasFees as Hex,
-        keccak256(userOp.paymasterAndData as Hex),
-        this.entryPointAddress,
-        BigInt(chainId)
-      ]
+    const packedUserOp = keccak256(
+      encodeAbiParameters(
+        [
+          { type: "address" },
+          { type: "uint256" },
+          { type: "bytes32" },
+          { type: "bytes32" },
+          { type: "bytes32" },
+          { type: "uint256" },
+          { type: "bytes32" },
+          { type: "bytes32" },
+        ],
+        [
+          userOp.sender as Address,
+          userOp.nonce,
+          keccak256(userOp.initCode as Hex),
+          keccak256(userOp.callData as Hex),
+          userOp.accountGasLimits as Hex,
+          userOp.preVerificationGas,
+          userOp.gasFees as Hex,
+          keccak256(userOp.paymasterAndData as Hex),
+        ]
+      )
     );
-    
-    return keccak256(packed as Hex);
+
+    return keccak256(
+      encodeAbiParameters(
+        [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }],
+        [packedUserOp, this.entryPointAddress, BigInt(chainId)]
+      )
+    );
   }
 
   /**
@@ -488,7 +504,7 @@ export class UserOpBuilder {
     const hex = packed.replace("0x", "");
     const verificationGasLimitHex = hex.slice(0, 32); // First 16 bytes (32 hex chars)
     const callGasLimitHex = hex.slice(32, 64); // Last 16 bytes (32 hex chars)
-    
+
     return {
       verificationGasLimit: BigInt(`0x${verificationGasLimitHex}` as `0x${string}`),
       callGasLimit: BigInt(`0x${callGasLimitHex}` as `0x${string}`)
@@ -503,7 +519,7 @@ export class UserOpBuilder {
     const hex = packed.replace("0x", "");
     const maxPriorityFeePerGasHex = hex.slice(0, 32); // First 16 bytes (32 hex chars)
     const maxFeePerGasHex = hex.slice(32, 64); // Last 16 bytes (32 hex chars)
-    
+
     return {
       maxPriorityFeePerGas: BigInt(`0x${maxPriorityFeePerGasHex}` as `0x${string}`),
       maxFeePerGas: BigInt(`0x${maxFeePerGasHex}` as `0x${string}`)

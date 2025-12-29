@@ -171,19 +171,17 @@ contract MultiLevelAccount is IAccount, Ownable {
         // Validate signature (owner must sign)
         bytes32 hash = userOpHash.toEthSignedMessageHash();
         address signer = hash.recover(userOp.signature);
-        
+
         if (signer != owner()) {
             return 1; // SIG_VALIDATION_FAILED
         }
-        
+
         // Pay prefund if required
         if (missingAccountFunds > 0) {
-            (bool success,) = payable(msg.sender).call{
-                value: missingAccountFunds
-            }("");
+            (bool success, ) = payable(msg.sender).call{value: missingAccountFunds}("");
             require(success, "Prefund failed");
         }
-        
+
         return 0; // SIG_VALIDATION_SUCCEEDED
     }
     

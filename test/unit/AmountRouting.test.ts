@@ -1,12 +1,13 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 import { MultiLevelAccount } from "../../typechain-types";
 import { deployFixture, DeployFixture } from "../helpers/fixtures";
 
 describe("Amount Routing - Unit Tests", () => {
   let fixture: DeployFixture;
   let account: MultiLevelAccount;
-  let owner: any;
+  let owner: SignerWithAddress;
 
   beforeEach(async () => {
     fixture = await deployFixture();
@@ -18,7 +19,7 @@ describe("Amount Routing - Unit Tests", () => {
     it("Should route to single level for small amounts", async () => {
       const amount = ethers.parseEther("5000");
       const config = await account.getConfigForAmount(amount);
-      
+
       expect(config.levelIds.length).to.equal(1);
       expect(config.levelIds[0]).to.equal(1n);
       expect(config.quorums[0]).to.equal(2n);
@@ -27,7 +28,7 @@ describe("Amount Routing - Unit Tests", () => {
     it("Should route to two levels for medium amounts", async () => {
       const amount = ethers.parseEther("50000");
       const config = await account.getConfigForAmount(amount);
-      
+
       expect(config.levelIds.length).to.equal(2);
       expect(config.levelIds[0]).to.equal(1n);
       expect(config.levelIds[1]).to.equal(2n);
@@ -38,7 +39,7 @@ describe("Amount Routing - Unit Tests", () => {
     it("Should route to three levels for large amounts", async () => {
       const amount = ethers.parseEther("2000000");
       const config = await account.getConfigForAmount(amount);
-      
+
       expect(config.levelIds.length).to.equal(3);
       expect(config.levelIds[0]).to.equal(1n);
       expect(config.levelIds[1]).to.equal(2n);
@@ -73,7 +74,7 @@ describe("Amount Routing - Unit Tests", () => {
     it("Should handle maximum uint256 value", async () => {
       const maxAmount = ethers.MaxUint256;
       const config = await account.getConfigForAmount(maxAmount);
-      
+
       expect(config.levelIds.length).to.equal(3);
     });
   });
@@ -104,7 +105,7 @@ describe("Amount Routing - Unit Tests", () => {
     it("Should have correct quorum per level", async () => {
       const amount = ethers.parseEther("2000000");
       const config = await account.getConfigForAmount(amount);
-      
+
       // Level 1: 3-of-3
       expect(config.quorums[0]).to.equal(3n);
       // Level 2: 2-of-2
@@ -118,7 +119,7 @@ describe("Amount Routing - Unit Tests", () => {
     it("Should have correct timelock per level", async () => {
       const amount = ethers.parseEther("2000000");
       const config = await account.getConfigForAmount(amount);
-      
+
       // Level 1: 1 hour
       expect(config.timelocks[0]).to.equal(3600n);
       // Level 2: 2 hours

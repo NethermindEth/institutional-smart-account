@@ -1,6 +1,6 @@
 import { encodeFunctionData, type Address, type Hex } from "viem";
 import type { PublicClient } from "viem";
-import { MULTI_LEVEL_ACCOUNT_ABI, ENTRY_POINT_ABI } from "../contracts/abis";
+import { MULTI_LEVEL_ACCOUNT_ABI } from "../contracts/abis";
 
 /**
  * Parameters for executing a transaction on MultiLevelAccount
@@ -50,12 +50,22 @@ export class MultiLevelAccountPlugin {
    * @param key Nonce key (default 0 for standard accounts)
    */
   async getNonce(key: bigint = 0n): Promise<bigint> {
-    // EntryPoint.getNonce(address sender, uint192 key) returns uint256
     const nonce = await this.publicClient.readContract({
       address: this.entryPointAddress,
-      abi: ENTRY_POINT_ABI,
+      abi: [
+        {
+          type: "function",
+          name: "getNonce",
+          stateMutability: "view",
+          inputs: [
+            { name: "sender", type: "address" },
+            { name: "key", type: "uint192" },
+          ],
+          outputs: [{ name: "nonce", type: "uint256" }],
+        },
+      ],
       functionName: "getNonce",
-      args: [this.accountAddress, key]
+      args: [this.accountAddress, key],
     });
     return nonce as bigint;
   }

@@ -1,20 +1,21 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 import { MultiLevelAccountFactory, MultiLevelAccount, Level } from "../../typechain-types";
 import { IEntryPoint } from "../../typechain-types/@account-abstraction/contracts/interfaces";
 
 describe("MultiLevelAccountFactory - Unit Tests", () => {
   let factory: MultiLevelAccountFactory;
   let entryPoint: IEntryPoint;
-  let owner: any;
-  let ops1: any, ops2: any, ops3: any;
-  let comp1: any, comp2: any;
-  let exec: any;
+  let owner: SignerWithAddress;
+  let ops1: SignerWithAddress, ops2: SignerWithAddress, ops3: SignerWithAddress;
+  let comp1: SignerWithAddress, comp2: SignerWithAddress;
+  let exec: SignerWithAddress;
 
   beforeEach(async () => {
-    const [deployer, ownerAddr, ops1Addr, ops2Addr, ops3Addr, comp1Addr, comp2Addr, execAddr] = 
+    const [deployer, ownerAddr, ops1Addr, ops2Addr, ops3Addr, comp1Addr, comp2Addr, execAddr] =
       await ethers.getSigners();
-    
+
     owner = ownerAddr;
     ops1 = ops1Addr;
     ops2 = ops2Addr;
@@ -54,7 +55,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         .find((parsed) => parsed && parsed.name === "AccountCreated");
 
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const accountAddress = accountCreatedEvent.args[0];
         const account = await ethers.getContractAt(
@@ -130,7 +131,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
 
   describe("Counterfactual Address", () => {
     let levelSigners: string[][];
-    
+
     beforeEach(() => {
       levelSigners = [[ops1.address]];
     });
@@ -138,7 +139,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
     it("Should compute counterfactual address", async () => {
       const salt = 12345;
       const computedAddress = await factory.computeAccountAddress(owner.address, levelSigners, salt);
-      
+
       expect(computedAddress).to.not.equal(ethers.ZeroAddress);
       expect(computedAddress).to.be.a("string");
     });
@@ -165,7 +166,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       const salt2 = 2n;
       const address1 = await factory.computeAccountAddress(owner.address, levelSigners, salt1);
       const address2 = await factory.computeAccountAddress(owner.address, levelSigners, salt2);
-      
+
       // These should be different (CREATE2 formula with different salts)
       expect(address1).to.not.equal(address2, "Addresses should be different for different salts");
       expect(address1).to.not.equal(ethers.ZeroAddress);
@@ -178,14 +179,14 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       // Use signers[7] and signers[8] if available, otherwise use 0 and 1
       const owner1 = signers.length > 7 ? signers[7] : signers[0];
       const owner2 = signers.length > 8 ? signers[8] : signers[1];
-      
+
       // Verify we have different owners
       expect(owner1.address).to.not.equal(owner2.address, "Test setup: owners must be different");
-      
+
       // Get addresses with same salt but different owners
       const address1 = await factory.computeAccountAddress(owner1.address, levelSigners, 1);
       const address2 = await factory.computeAccountAddress(owner2.address, levelSigners, 1);
-      
+
       // Different owners should produce different addresses
       // The owner is part of the constructor args, so different owners = different initCode
       expect(address1).to.not.equal(ethers.ZeroAddress);
@@ -197,10 +198,10 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       // This test verifies the fix: different levelSigners produce different addresses
       const levelSigners1 = [[ops1.address]];
       const levelSigners2 = [[ops2.address]];
-      
+
       const address1 = await factory.computeAccountAddress(owner.address, levelSigners1, 1);
       const address2 = await factory.computeAccountAddress(owner.address, levelSigners2, 1);
-      
+
       // Different levelSigners should produce different addresses
       expect(address1).to.not.equal(ethers.ZeroAddress);
       expect(address2).to.not.equal(ethers.ZeroAddress);
@@ -210,10 +211,10 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
     it("Should match computeAccountAddress with actual deployed address", async () => {
       const salt = 12345;
       const predictedAddress = await factory.computeAccountAddress(owner.address, levelSigners, salt);
-      
+
       const tx = await factory.createAccount(owner.address, levelSigners, salt);
       const receipt = await tx.wait();
-      
+
       const accountCreatedEvent = receipt?.logs
         .map((log) => {
           try {
@@ -223,9 +224,9 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
           }
         })
         .find((parsed) => parsed && parsed.name === "AccountCreated");
-      
+
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const actualAddress = accountCreatedEvent.args[0];
         // The predicted address should match the actual deployed address
@@ -238,7 +239,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
       // Users can safely pre-fund the counterfactual address before deployment
       const salt = 0;
       const predictedAddress = await factory.computeAccountAddress(owner.address, levelSigners, salt);
-      
+
       // Pre-fund the predicted address
       const funder = owner;
       const fundAmount = ethers.parseEther("1.0");
@@ -246,15 +247,15 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         to: predictedAddress,
         value: fundAmount,
       });
-      
+
       // Verify the funds are at the predicted address
       const balanceBefore = await ethers.provider.getBalance(predictedAddress);
       expect(balanceBefore).to.equal(fundAmount);
-      
+
       // Deploy the account using CREATE2
       const tx = await factory.createAccount(owner.address, levelSigners, salt);
       const receipt = await tx.wait();
-      
+
       const accountCreatedEvent = receipt?.logs
         .map((log) => {
           try {
@@ -264,19 +265,19 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
           }
         })
         .find((parsed) => parsed && parsed.name === "AccountCreated");
-      
+
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const actualAddress = accountCreatedEvent.args[0];
-        
+
         // The actual address must match the predicted address
         expect(actualAddress).to.equal(predictedAddress);
-        
+
         // Verify the funds are still there and accessible
         const balanceAfter = await ethers.provider.getBalance(actualAddress);
         expect(balanceAfter).to.equal(fundAmount);
-        
+
         // Verify we can interact with the account (proving it's the correct contract)
         const account = await ethers.getContractAt(
           "MultiLevelAccount",
@@ -296,14 +297,14 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         [ops1.address, ops2.address, ops3.address],
         [comp1.address, comp2.address]
       ];
-      
+
       // Compute the legitimate address
       const legitimateAddress = await factory.computeAccountAddress(
         owner.address,
         legitimateLevelSigners,
         salt
       );
-      
+
       // Attacker tries to deploy with different levelSigners (attacker-controlled)
       const allSigners = await ethers.getSigners();
       const attacker = allSigners.length > 9 ? allSigners[9] : allSigners[0];
@@ -311,24 +312,24 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         [attacker.address], // Attacker controls all signers
         [attacker.address]
       ];
-      
+
       // Attacker's address will be different because levelSigners are different
       const attackerAddress = await factory.computeAccountAddress(
         owner.address,
         attackerLevelSigners,
         salt
       );
-      
+
       // Verify addresses are different (fix prevents attack)
       expect(legitimateAddress).to.not.equal(attackerAddress);
-      
+
       // Attacker tries to deploy their version
       await factory.connect(attacker).createAccount(
         owner.address,
         attackerLevelSigners,
         salt
       );
-      
+
       // Now legitimate user tries to deploy - should succeed at different address
       const tx = await factory.createAccount(
         owner.address,
@@ -336,7 +337,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         salt
       );
       const receipt = await tx.wait();
-      
+
       const accountCreatedEvent = receipt?.logs
         .map((log) => {
           try {
@@ -346,24 +347,24 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
           }
         })
         .find((parsed) => parsed && parsed.name === "AccountCreated");
-      
+
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const actualAddress = accountCreatedEvent.args[0];
         // Should deploy at the legitimate address, not the attacker's address
         expect(actualAddress).to.equal(legitimateAddress);
         expect(actualAddress).to.not.equal(attackerAddress);
-        
+
         // Verify the account has the correct levelSigners
         const account = await ethers.getContractAt(
           "MultiLevelAccount",
           actualAddress
         ) as unknown as MultiLevelAccount;
-        
+
         // Verify levelSigners match
         await account.verifyLevelSigners(legitimateLevelSigners);
-        
+
         // Verify attacker's levelSigners don't match
         await expect(
           account.verifyLevelSigners(attackerLevelSigners)
@@ -376,10 +377,10 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         [ops1.address, ops2.address],
         [comp1.address]
       ];
-      
+
       const tx = await factory.createAccount(owner.address, levelSigners, 0);
       const receipt = await tx.wait();
-      
+
       const accountCreatedEvent = receipt?.logs
         .map((log) => {
           try {
@@ -389,19 +390,19 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
           }
         })
         .find((parsed) => parsed && parsed.name === "AccountCreated");
-      
+
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const accountAddress = accountCreatedEvent.args[0];
         const account = await ethers.getContractAt(
           "MultiLevelAccount",
           accountAddress
         ) as unknown as MultiLevelAccount;
-        
+
         // Verify levelSigners match the hash
         await account.verifyLevelSigners(levelSigners);
-        
+
         // Verify wrong levelSigners don't match
         const wrongLevelSigners = [[ops3.address]];
         await expect(
@@ -432,7 +433,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         .find((parsed) => parsed && parsed.name === "AccountCreated");
 
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const accountAddress = accountCreatedEvent.args[0];
         const account = await ethers.getContractAt(
@@ -463,7 +464,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         .find((parsed) => parsed && parsed.name === "AccountCreated");
 
       expect(accountCreatedEvent).to.not.be.null;
-      
+
       if (accountCreatedEvent && accountCreatedEvent.args) {
         const accountAddress = accountCreatedEvent.args[0];
         const account = await ethers.getContractAt(
@@ -492,7 +493,7 @@ describe("MultiLevelAccountFactory - Unit Tests", () => {
         .filter((parsed) => parsed && parsed.name === "LevelCreated");
 
       expect(levelEvents?.length).to.equal(1);
-      
+
       if (levelEvents && levelEvents[0] && levelEvents[0].args) {
         const levelEvent = levelEvents[0];
         expect(levelEvent.args[1]).to.equal(1n); // levelId

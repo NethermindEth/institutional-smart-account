@@ -6,7 +6,7 @@ import { MULTI_LEVEL_ACCOUNT_ABI, LEVEL_ABI } from "./contracts/abis";
 export class EventMonitor {
   private accountAddress: Address;
   private publicClient: PublicClient;
-  
+
   constructor(
     accountAddress: Address | string,
     publicClient: PublicClient
@@ -14,7 +14,7 @@ export class EventMonitor {
     this.accountAddress = accountAddress as Address;
     this.publicClient = publicClient;
   }
-  
+
   /**
    * Watch transaction progress
    * Uses polling to check for status changes
@@ -26,26 +26,25 @@ export class EventMonitor {
     let lastStatus: TransactionStatus | null = null;
     let intervalId: NodeJS.Timeout;
     let isActive = true;
-    let lastDeniedBlockChecked = 0;
-    
+
     const checkStatus = async () => {
       if (!isActive) return;
-      
+
       try {
         const currentStatus = await this.getTransactionStatus(txHash);
-        
+
         // Only call callback if status changed
-        if (!lastStatus || 
-            lastStatus.currentLevelIndex !== currentStatus.currentLevelIndex ||
-            lastStatus.fullyApproved !== currentStatus.fullyApproved) {
+        if (!lastStatus ||
+          lastStatus.currentLevelIndex !== currentStatus.currentLevelIndex ||
+          lastStatus.fullyApproved !== currentStatus.fullyApproved) {
           callback(currentStatus);
           lastStatus = currentStatus;
         }
-        
+
         // Stop polling if transaction is executed or denied
         if (currentStatus.fullyApproved) {
           // Check if executed by looking for TransactionExecuted event
-          const eventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) => 
+          const eventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) =>
             e.type === "event" && (e as any).name === "TransactionExecuted"
           ) as any;
           const logs = await this.publicClient.getLogs({
@@ -57,18 +56,17 @@ export class EventMonitor {
             },
             args: { txHash: txHash as Hex }
           });
-          
+
           if (logs.length > 0) {
             isActive = false;
             clearInterval(intervalId);
             return;
           }
         }
-        
+
         // Check for denial
-        const fromBlock =
-          lastDeniedBlockChecked > 0 ? BigInt(lastDeniedBlockChecked) : 0n;
-        const deniedEventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) => 
+        const fromBlock = await this._getSafeFromBlock(50_000n);
+        const deniedEventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) =>
           e.type === "event" && (e as any).name === "TransactionDenied"
         ) as any;
         const deniedLogs = await this.publicClient.getLogs({
@@ -81,10 +79,10 @@ export class EventMonitor {
           args: { txHash: txHash as Hex },
           fromBlock
         });
-        
+
         if (deniedLogs.length > 0) {
           let levelId: number | undefined = undefined;
-          
+
           for (const log of deniedLogs) {
             try {
               const decoded = decodeEventLog({
@@ -102,36 +100,30 @@ export class EventMonitor {
               // Ignore decode errors, continue
             }
           }
-          
+
           const updatedStatuses = currentStatus.levelStatuses.length > 0
             ? currentStatus.levelStatuses.map((ls) =>
-                levelId !== undefined && ls.levelId === levelId
-                  ? { ...ls, denied: true }
-                  : ls
-              )
+              levelId !== undefined && ls.levelId === levelId
+                ? { ...ls, denied: true }
+                : ls
+            )
             : (levelId !== undefined
-                ? [{
-                    levelId,
-                    submitted: true,
-                    approved: false,
-                    denied: true,
-                    signaturesCollected: 0,
-                    signaturesRequired: 0,
-                    timelockRemaining: 0
-                  }]
-                : currentStatus.levelStatuses);
-          
+              ? [{
+                levelId,
+                submitted: true,
+                approved: false,
+                denied: true,
+                signaturesCollected: 0,
+                signaturesRequired: 0,
+                timelockRemaining: 0
+              }]
+              : currentStatus.levelStatuses);
+
           const deniedStatus = {
             ...currentStatus,
             levelStatuses: updatedStatuses
           };
-          
-          const lastLog = deniedLogs[deniedLogs.length - 1];
-          const logBlock = (lastLog as any)?.blockNumber;
-          if (typeof logBlock === "bigint") {
-            lastDeniedBlockChecked = Number(logBlock + 1n);
-          }
-          
+
           callback(deniedStatus);
           lastStatus = deniedStatus;
           isActive = false;
@@ -142,23 +134,23 @@ export class EventMonitor {
         console.error("Error checking transaction status:", error);
       }
     };
-    
+
     // Initial status
     this.getTransactionStatus(txHash).then((status) => {
       lastStatus = status;
       callback(status);
     }).catch(console.error);
-    
+
     // Poll every 2 seconds
     intervalId = setInterval(checkStatus, 2000);
-    
+
     // Return unsubscribe function
     return () => {
       isActive = false;
       clearInterval(intervalId);
     };
   }
-  
+
   /**
    * Get current transaction status
    */
@@ -167,26 +159,26 @@ export class EventMonitor {
     const maxRetries = 3;
     const retryDelay = 1000;
     let txData: any | null = null;
-    
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         if (attempt > 0) {
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
-        
+
         const result = await this.publicClient.readContract({
           address: this.accountAddress,
           abi: MULTI_LEVEL_ACCOUNT_ABI,
           functionName: "getTransaction",
           args: [txHash as Hex]
         }) as any;
-        
+
         // Check if transaction exists - if to is zero address and value is 0, it's likely not stored
         // But we also check if proposedAt is 0 to be more certain
-        if (!result || 
-            (result.to === zeroAddress && 
-             (result.value === 0n || result.value === "0" || Number(result.value) === 0) &&
-             (result.proposedAt === 0n || result.proposedAt === "0" || Number(result.proposedAt) === 0))) {
+        if (!result ||
+          (result.to === zeroAddress &&
+            (result.value === 0n || result.value === "0" || Number(result.value) === 0) &&
+            (result.proposedAt === 0n || result.proposedAt === "0" || Number(result.proposedAt) === 0))) {
           if (attempt < maxRetries - 1) {
             continue;
           }
@@ -202,7 +194,7 @@ export class EventMonitor {
           }
           break;
         }
-        
+
         txData = {
           to: result.to as string,
           value: BigInt(result.value ?? 0),
@@ -217,14 +209,14 @@ export class EventMonitor {
             timelocks: (result.config?.timelocks ?? []).map((t: bigint) => BigInt(t))
           }
         };
-        
+
         break;
       } catch (error: any) {
         const message = error?.message ?? "";
         if (attempt < maxRetries - 1 &&
-            (message.includes("Position") ||
-             message.includes("out of bounds") ||
-             message.includes("Transaction not found"))) {
+          (message.includes("Position") ||
+            message.includes("out of bounds") ||
+            message.includes("Transaction not found"))) {
           continue;
         }
         // If we haven't tried getting from events yet, try that
@@ -241,7 +233,7 @@ export class EventMonitor {
         throw error;
       }
     }
-    
+
     const [currentIndex, fullyApproved] = await Promise.all([
       this.publicClient.readContract({
         address: this.accountAddress,
@@ -256,12 +248,12 @@ export class EventMonitor {
         args: [txHash as Hex]
       }) as Promise<boolean>
     ]);
-    
+
     // Determine level IDs
     const levelIds = txData
       ? txData.config.levelIds
       : await this._getAllLevelIds();
-    
+
     // Get level statuses - pass config quorums so we can show correct requirements
     // even for levels that haven't been submitted yet
     const levelStatuses = await this._getLevelStatuses(
@@ -269,7 +261,7 @@ export class EventMonitor {
       levelIds,
       txData?.config?.quorums
     );
-    
+
     return {
       txHash,
       to: txData?.to ?? zeroAddress,
@@ -281,14 +273,14 @@ export class EventMonitor {
       levelStatuses
     };
   }
-  
+
   private async _getLevelStatuses(
     txHash: string,
     levelIds: readonly bigint[],
     configQuorums?: readonly bigint[]
   ): Promise<LevelStatus[]> {
     const statuses: LevelStatus[] = [];
-    
+
     for (let i = 0; i < levelIds.length; i++) {
       const levelId = levelIds[i];
       const levelAddress = await this.publicClient.readContract({
@@ -297,7 +289,7 @@ export class EventMonitor {
         functionName: "levelContracts",
         args: [levelId]
       }) as Address;
-      
+
       const [stateResult, progressResult, remaining] = await Promise.all([
         this.publicClient.readContract({
           address: levelAddress,
@@ -318,22 +310,22 @@ export class EventMonitor {
           args: [txHash as Hex]
         }) as Promise<bigint>
       ]);
-      
+
       const state = (stateResult?.state ?? stateResult) as any;
       const progress = (progressResult as any);
-      
+
       const submitted = state?.submitted ?? state?.[0] ?? false;
       const approved = state?.approved ?? state?.[5] ?? false;
       const denied = state?.denied ?? state?.[6] ?? false;
       const signatureCount = progress?.current ?? progress?.[0] ?? 0n;
-      
+
       // Use quorum from config if available and level hasn't been submitted yet
       // This ensures we show the correct requirement even for future levels
       let requiredSignatures = progress?.required ?? progress?.[1] ?? 0n;
       if (requiredSignatures === 0n && configQuorums && i < configQuorums.length) {
         requiredSignatures = configQuorums[i];
       }
-      
+
       statuses.push({
         levelId: Number(levelId),
         submitted: Boolean(submitted),
@@ -344,38 +336,47 @@ export class EventMonitor {
         timelockRemaining: Number(remaining)
       });
     }
-    
+
     return statuses;
   }
-  
+
   private async _getAllLevelIds(): Promise<bigint[]> {
     const nextLevelId = await this.publicClient.readContract({
       address: this.accountAddress,
       abi: MULTI_LEVEL_ACCOUNT_ABI,
       functionName: "nextLevelId"
     }) as bigint;
-    
+
     const ids: bigint[] = [];
     for (let i = 1n; i < nextLevelId; i++) {
       ids.push(i);
     }
     return ids;
   }
-  
+
+  private async _getSafeFromBlock(lookback: bigint): Promise<bigint | 'earliest'> {
+    try {
+      const currentBlock = await this.publicClient.getBlockNumber();
+      return currentBlock > lookback ? currentBlock - lookback : 0n;
+    } catch {
+      return 'earliest';
+    }
+  }
+
   /**
    * Try to get transaction data from TransactionProposed events
    * This is a fallback when the transaction might have been deleted or not stored
    */
   private async _getTransactionFromEvents(txHash: string): Promise<any | null> {
     try {
-      const eventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) => 
+      const eventAbi = MULTI_LEVEL_ACCOUNT_ABI.find((e) =>
         e.type === "event" && (e as any).name === "TransactionProposed"
       ) as any;
-      
+
       if (!eventAbi) {
         return null;
       }
-      
+
       const logs = await this.publicClient.getLogs({
         address: this.accountAddress,
         event: {
@@ -386,14 +387,14 @@ export class EventMonitor {
         // Important: without a fromBlock, some clients default to a narrow range and
         // we can miss historical TransactionProposed logs (especially after the
         // transaction is denied/executed and removed from storage).
-        fromBlock: 0n,
+        fromBlock: await this._getSafeFromBlock(50_000n),
         args: { txHash: txHash as Hex }
       });
-      
+
       if (logs.length === 0) {
         return null;
       }
-      
+
       // Get the most recent event
       const log = logs[logs.length - 1];
       const decoded = decodeEventLog({
@@ -402,9 +403,9 @@ export class EventMonitor {
         data: log.data,
         topics: log.topics
       });
-      
+
       const args = decoded.args as any;
-      
+
       // We can get to, value, amount, levelIds, and quorums from the event
       // But we don't have data, proposedAt, or full config
       // So we'll construct a minimal txData object
