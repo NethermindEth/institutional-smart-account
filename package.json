@@ -1,6 +1,6 @@
 {
   "name": "@1trillionsecurity/institutional-smart-account",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "ERC-4337 compatible multi-level sequential approval system for institutional blockchain accounts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
